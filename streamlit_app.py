@@ -71,7 +71,7 @@ def call_ai_provider(prompt, api_key, provider, hf_model_id=None):
         elif provider == "OpenAI (GPT-4)":
             client = OpenAI(api_key=api_key)
             response = client.chat.completions.create(
-                model="gpt-4-turbo",
+                model="gpt-4o",
                 messages=[{"role": "user", "content": prompt}]
             )
             return response.choices[0].message.content.strip()
