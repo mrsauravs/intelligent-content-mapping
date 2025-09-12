@@ -1,0 +1,7 @@
+streamlit
+pandas
+requests
+beautifulsoup4
+google-generativeai
+openai
+huggingface-hub
