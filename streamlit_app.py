@@ -4,12 +4,30 @@ import requests
 from bs4 import BeautifulSoup
 import io
 import re
-import time # Import time for potential rate limiting
+import time
 import google.generativeai as genai
 from openai import OpenAI
 from huggingface_hub import InferenceClient
 
-# --- FOCUSED AI PROMPT FUNCTIONS (NEW STRATEGY) ---
+# --- FOCUSED AI PROMPT FUNCTIONS ---
+
+def get_deployment_type_prompt(content):
+    """Creates a focused prompt for determining the deployment type."""
+    return f"""
+    Analyze the following 'Page Content'. Your task is to determine the correct deployment type.
+
+    **Instructions**:
+    - The deployment type must be one of these three options: "Alation Cloud Service", "Customer Managed", or "Alation Cloud Service, Customer Managed".
+    - Your response MUST ONLY be the single most appropriate option from that list.
+    - If you cannot determine the type, respond with an empty string.
+
+    **Page Content**:
+    ---
+    {content[:4000]}
+    ---
+
+    **Your Response (choose one from the list)**:
+    """
 
 def get_mapping_prompt(content, column_name, options_list):
     """Creates a focused prompt for mapping content to a list of options."""
@@ -58,10 +76,10 @@ def get_keywords_prompt(content):
     **Your Response (comma-separated keywords only)**:
     """
 
-# --- AI API CALLER (REVISED) ---
+# --- CENTRALIZED AI API CALLER WITH SANITIZATION ---
 
 def call_ai_provider(prompt, api_key, provider, hf_model_id=None):
-    """A single function to handle calls to any selected AI provider."""
+    """A single function to handle calls to any selected AI provider and sanitize the response."""
     response_text = ""
     try:
         if provider == "Google Gemini":
@@ -72,7 +90,7 @@ def call_ai_provider(prompt, api_key, provider, hf_model_id=None):
         elif provider == "OpenAI (GPT-4)":
             client = OpenAI(api_key=api_key)
             response = client.chat.completions.create(
-                model="gpt-4o",
+                model="gpt-4o",  # Using the updated model name
                 messages=[{"role": "user", "content": prompt}]
             )
             response_text = response.choices[0].message.content
@@ -82,13 +100,13 @@ def call_ai_provider(prompt, api_key, provider, hf_model_id=None):
             response_text = response
     except Exception as e:
         st.warning(f"AI API call failed: {e}")
-        return "" # Return empty string on failure
+        return ""
 
     # Sanitize the response to remove all types of quotes and extra whitespace
     sanitized_text = response_text.strip().replace('"', '').replace("'", "")
     return sanitized_text
 
-# --- DATA ENRICHMENT ORCHESTRATOR (REVISED) ---
+# --- DATA ENRICHMENT ORCHESTRATOR ---
 
 def enrich_data_with_ai(dataframe, user_roles, topics, functional_areas, api_key, provider, hf_model_id=None):
     df_to_process = dataframe.copy()
@@ -101,40 +119,52 @@ def enrich_data_with_ai(dataframe, user_roles, topics, functional_areas, api_key
     pb = st.progress(0, f"Starting AI enrichment for {total_rows} rows...")
 
     for index, row in df_to_process.iterrows():
-        # Update progress bar
         pb.progress((index + 1) / total_rows, f"Processing row {index + 1}/{total_rows}...")
         content = row['Page Content']
 
-        # Task 1: Fill User Role if blank
+        # Task 1: Fill Deployment Type if blank (with safety net)
+        if pd.isna(row['Deployment Type']) or row['Deployment Type'] == '' or 'Fetch Error' in str(row['Deployment Type']):
+            prompt = get_deployment_type_prompt(content)
+            ai_response = call_ai_provider(prompt, api_key, provider, hf_model_id)
+            
+            valid_deployment_types = ["Alation Cloud Service", "Customer Managed", "Alation Cloud Service, Customer Managed"]
+            if ai_response in valid_deployment_types:
+                df_to_process.loc[index, 'Deployment Type'] = ai_response
+            else:
+                df_to_process.loc[index, 'Deployment Type'] = "" # Fallback to blank if invalid
+            time.sleep(1)
+
+        # Task 2: Fill User Role if blank
         if pd.isna(row['User Role']) or row['User Role'] == '':
             prompt = get_mapping_prompt(content, 'User Role', user_roles)
             ai_response = call_ai_provider(prompt, api_key, provider, hf_model_id)
             df_to_process.loc[index, 'User Role'] = ai_response
-            time.sleep(1) # Add a small delay to avoid hitting rate limits
+            time.sleep(1)
 
-        # Task 2: Fill Topics if blank
+        # Task 3: Fill Topics if blank
         if pd.isna(row['Topics']) or row['Topics'] == '':
             prompt = get_mapping_prompt(content, 'Topics', topics)
             ai_response = call_ai_provider(prompt, api_key, provider, hf_model_id)
             df_to_process.loc[index, 'Topics'] = ai_response
             time.sleep(1)
 
-        # Task 3: Always map Functional Area
+        # Task 4: Always map Functional Area
         prompt = get_mapping_prompt(content, 'Functional Area', functional_areas)
         ai_response = call_ai_provider(prompt, api_key, provider, hf_model_id)
         df_to_process.loc[index, 'Functional Area'] = ai_response
         time.sleep(1)
         
-        # Task 4: Always generate Keywords
+        # Task 5: Always generate Keywords
         prompt = get_keywords_prompt(content)
         ai_response = call_ai_provider(prompt, api_key, provider, hf_model_id)
-        # Enclose in quotes for CSV compatibility
+        # The response is pre-sanitized, so we just wrap it in quotes
         df_to_process.loc[index, 'Keywords'] = f'"{ai_response}"'
         time.sleep(1)
 
     return df_to_process
 
-# --- Utility and Scraping Functions (No changes needed) ---
+# --- UTILITY AND SCRAPING FUNCTIONS ---
+
 @st.cache_data
 def analyze_page_content(url):
     try:
@@ -150,17 +180,31 @@ def analyze_page_content(url):
 
 def get_deployment_type_from_scraping(soup):
     if not soup: return ""
+    text_content = soup.get_text().lower()
+    is_cloud = 'cloud' in text_content
+    is_on_prem = 'customer managed' in text_content or 'on-prem' in text_content
+    
+    if is_cloud and is_on_prem:
+        return "Alation Cloud Service, Customer Managed"
+    if is_cloud:
+        return "Alation Cloud Service"
+    if is_on_prem:
+        return "Customer Managed"
+    
+    # Fallback to original label check if keywords fail
     if soup.find('p', class_='cloud-label') and soup.find('p', class_='on-prem-label'):
         return "Alation Cloud Service, Customer Managed"
-    if soup.find('p', class_='cloud-label'): return "Alation Cloud Service"
-    if soup.find('p', class_='on-prem-label'): return "Customer Managed"
+    if soup.find('p', class_='cloud-label'):
+        return "Alation Cloud Service"
+    if soup.find('p', class_='on-prem-label'):
+        return "Customer Managed"
     return ""
 
 def extract_main_content(soup):
     if not soup: return "Content Not Available"
     main_content = soup.find('article') or soup.find('main') or soup.body
     if main_content:
-        for element in main_content.find_all(['nav', 'header', 'footer', 'aside']):
+        for element in main_content.find_all(['nav', 'header', 'footer', 'aside', 'script', 'style']):
             element.decompose()
         return main_content.get_text(separator=' ', strip=True)
     return "Main Content Not Found"
@@ -170,9 +214,10 @@ def find_items_in_text(text, items):
     found_items = sorted([item for item in items if re.search(r'\b' + re.escape(item) + r'\b', text, re.IGNORECASE)])
     return ", ".join(found_items)
 
-# --- Streamlit UI (No major changes, just ensuring it calls the new orchestrator) ---
+# --- STREAMLIT UI ---
+
 st.set_page_config(layout="wide")
-st.title("📄 AI-Powered Content Mapper (v2 - Robust)")
+st.title("📄 AI-Powered Content Mapper")
 st.markdown("A five-step tool to scrape, map, and enrich web content using focused AI tasks.")
 
 # Initialize session state 
@@ -280,18 +325,24 @@ with st.expander("Step 5: Enrich Data with AI", expanded=True):
                 )
             st.success("✅ AI enrichment complete! The final report is ready.")
 
-# Results Display
+# --- RESULTS DISPLAY ---
+
 st.markdown("---")
 st.subheader("📊 Results")
 df_to_show = pd.DataFrame()
-if not st.session_state.df_final.empty: df_to_show = st.session_state.df_final
-elif not st.session_state.df3.empty: df_to_show = st.session_state.df3
-elif not st.session_state.df2.empty: df_to_show = st.session_state.df2
-elif not st.session_state.df1.empty: df_to_show = st.session_state.df1
+if not st.session_state.df_final.empty:
+    df_to_show = st.session_state.df_final
+elif not st.session_state.df3.empty:
+    df_to_show = st.session_state.df3
+elif not st.session_state.df2.empty:
+    df_to_show = st.session_state.df2
+elif not st.session_state.df1.empty:
+    df_to_show = st.session_state.df1
 
 if not df_to_show.empty:
     final_columns = ['Page Title', 'Page URL', 'Deployment Type', 'User Role', 'Functional Area', 'Topics', 'Keywords']
     display_columns = [col for col in final_columns if col in df_to_show.columns]
+    
     st.dataframe(df_to_show[display_columns])
     csv_data = df_to_show[display_columns].to_csv(index=False).encode('utf-8-sig')
     st.download_button("📥 Download Report (CSV)", csv_data, "enriched_report.csv", "text/csv")
