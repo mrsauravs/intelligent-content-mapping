@@ -62,26 +62,31 @@ def get_keywords_prompt(content):
 
 def call_ai_provider(prompt, api_key, provider, hf_model_id=None):
     """A single function to handle calls to any selected AI provider."""
+    response_text = ""
     try:
         if provider == "Google Gemini":
             genai.configure(api_key=api_key)
             model = genai.GenerativeModel('gemini-1.5-flash-latest')
             response = model.generate_content(prompt)
-            return response.text.strip()
+            response_text = response.text
         elif provider == "OpenAI (GPT-4)":
             client = OpenAI(api_key=api_key)
             response = client.chat.completions.create(
                 model="gpt-4o",
                 messages=[{"role": "user", "content": prompt}]
             )
-            return response.choices[0].message.content.strip()
+            response_text = response.choices[0].message.content
         elif provider == "Hugging Face":
             client = InferenceClient(token=api_key)
             response = client.text_generation(prompt, model=hf_model_id, max_new_tokens=256)
-            return response.strip()
+            response_text = response
     except Exception as e:
         st.warning(f"AI API call failed: {e}")
         return "" # Return empty string on failure
+
+    # Sanitize the response to remove all types of quotes and extra whitespace
+    sanitized_text = response_text.strip().replace('"', '').replace("'", "")
+    return sanitized_text
 
 # --- DATA ENRICHMENT ORCHESTRATOR (REVISED) ---
 
