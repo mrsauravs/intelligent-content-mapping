@@ -82,6 +82,7 @@ def get_prose_keywords_prompt(content):
     - Your response MUST ONLY be a comma-separated list.
     - Keywords should ideally be 1-3 words long. Avoid long descriptive phrases.
     - Do not include common English stop words (e.g., 'the', 'is', 'for', 'does').
+    - Do not include vague internal identifiers (e.g., 'pg-1', 'server-01').
 
     **Prose Content**:
     ---
@@ -101,6 +102,7 @@ def get_titles_keywords_prompt(titles_list):
     - Your response MUST ONLY be a comma-separated list.
     - Keywords should ideally be 1-3 words long. Avoid long descriptive phrases.
     - Do not include common English stop words (e.g., 'the', 'is', 'for', 'does').
+    - Do not include vague internal identifiers (e.g., 'pg-1', 'server-01').
 
     **Section Titles**:
     ---
@@ -217,11 +219,30 @@ def enrich_data_with_ai(dataframe, user_roles, topics, functional_areas, api_key
         url_keys = re.findall(r'(?i)(V\s?R?\d+)\b', url)
         all_keywords.extend(url_keys)
 
-        # Remove duplicates while preserving order
-        unique_keywords = list(dict.fromkeys(all_keywords))
+        # Remove duplicates case-insensitively, preserving original case of first occurrence
+        unique_keywords_cased = []
+        seen_keywords_lower = set()
+        for keyword in all_keywords:
+            lowered_keyword = keyword.lower()
+            if lowered_keyword not in seen_keywords_lower:
+                unique_keywords_cased.append(keyword)
+                seen_keywords_lower.add(lowered_keyword)
         
-        # Programmatically filter out stop words from the final list
-        final_keywords = [kw for kw in unique_keywords if kw.lower() not in STOP_WORDS]
+        # Filter out keywords that are subsets of other keywords
+        keywords_to_remove = set()
+        for shorter_kw in unique_keywords_cased:
+            for longer_kw in unique_keywords_cased:
+                if shorter_kw != longer_kw and re.search(r'\b' + re.escape(shorter_kw) + r'\b', longer_kw, re.IGNORECASE):
+                    keywords_to_remove.add(shorter_kw)
+        
+        subset_filtered_keywords = [kw for kw in unique_keywords_cased if kw not in keywords_to_remove]
+
+        # Programmatically filter out stop words, vague identifiers, and dotfiles
+        vague_identifier_pattern = re.compile(r'^[a-zA-Z]+-\d+$')
+        final_keywords = []
+        for kw in subset_filtered_keywords:
+            if kw.lower() not in STOP_WORDS and not vague_identifier_pattern.match(kw) and not kw.startswith('.'):
+                final_keywords.append(kw)
         
         df_to_process.loc[index, 'Keywords'] = f'"{", ".join(final_keywords)}"'
         
