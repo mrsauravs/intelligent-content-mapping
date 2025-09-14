@@ -16,6 +16,9 @@ STOP_WORDS = set([
     "will", "can", "should", "would", "could", "its", "it", "i", "me", "my", "we", "our", "you", "your"
 ])
 
+# A set of overly generic standalone concepts to filter from the final keyword list
+GENERIC_CONCEPTS_TO_REMOVE = {"version", "memory"}
+
 
 # --- FOCUSED AI PROMPT FUNCTIONS ---
 
@@ -82,7 +85,7 @@ def get_prose_keywords_prompt(content):
     - Your response MUST ONLY be a comma-separated list.
     - Keywords should ideally be 1-3 words long. Avoid long descriptive phrases.
     - Do not include common English stop words (e.g., 'the', 'is', 'for', 'does').
-    - Do not include vague internal identifiers (e.g., 'pg-1', 'server-01').
+    - Do not include vague internal identifiers (e.g., 'pg-1', 'server-01') or overly generic terms ("Version", "Memory").
 
     **Prose Content**:
     ---
@@ -102,7 +105,7 @@ def get_titles_keywords_prompt(titles_list):
     - Your response MUST ONLY be a comma-separated list.
     - Keywords should ideally be 1-3 words long. Avoid long descriptive phrases.
     - Do not include common English stop words (e.g., 'the', 'is', 'for', 'does').
-    - Do not include vague internal identifiers (e.g., 'pg-1', 'server-01').
+    - Do not include vague internal identifiers (e.g., 'pg-1', 'server-01') or overly generic terms ("Version", "Memory").
 
     **Section Titles**:
     ---
@@ -115,7 +118,7 @@ def get_titles_keywords_prompt(titles_list):
 def get_code_keywords_prompt(code_content):
     """Creates a refined prompt for extracting keywords from code blocks."""
     return f"""
-    Analyze the following code snippets from a technical document. Your task is to extract up to 5 of the most relevant technical keywords. Keywords can include important filenames, commands, or technologies.
+    Analyze the following code snippets. Your task is to extract up to 5 of the most relevant technical keywords. Keywords can include important filenames, commands, or technologies.
 
     **Critical Rules**:
     - Your response MUST ONLY be a comma-separated list.
@@ -219,14 +222,14 @@ def enrich_data_with_ai(dataframe, user_roles, topics, functional_areas, api_key
         url_keys = re.findall(r'(?i)(V\s?R?\d+)\b', url)
         all_keywords.extend(url_keys)
 
-        # Remove duplicates case-insensitively, preserving original case of first occurrence
+        # Remove duplicates case-insensitively, preserving original case and handling spacing
         unique_keywords_cased = []
-        seen_keywords_lower = set()
+        seen_keywords_normalized = set()
         for keyword in all_keywords:
-            lowered_keyword = keyword.lower()
-            if lowered_keyword not in seen_keywords_lower:
+            normalized_keyword = keyword.lower().replace(" ", "")
+            if normalized_keyword not in seen_keywords_normalized:
                 unique_keywords_cased.append(keyword)
-                seen_keywords_lower.add(lowered_keyword)
+                seen_keywords_normalized.add(normalized_keyword)
         
         # Filter out keywords that are subsets of other keywords
         keywords_to_remove = set()
@@ -237,11 +240,12 @@ def enrich_data_with_ai(dataframe, user_roles, topics, functional_areas, api_key
         
         subset_filtered_keywords = [kw for kw in unique_keywords_cased if kw not in keywords_to_remove]
 
-        # Programmatically filter out stop words, vague identifiers, and dotfiles
+        # Programmatically filter out stop words, vague identifiers, dotfiles, and generic concepts
         vague_identifier_pattern = re.compile(r'^[a-zA-Z]+-\d+$')
         final_keywords = []
         for kw in subset_filtered_keywords:
-            if kw.lower() not in STOP_WORDS and not vague_identifier_pattern.match(kw) and not kw.startswith('.'):
+            kw_lower = kw.lower()
+            if kw_lower not in STOP_WORDS and kw_lower not in GENERIC_CONCEPTS_TO_REMOVE and not vague_identifier_pattern.match(kw) and not kw.startswith('.'):
                 final_keywords.append(kw)
         
         df_to_process.loc[index, 'Keywords'] = f'"{", ".join(final_keywords)}"'
