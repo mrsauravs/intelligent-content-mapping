@@ -89,6 +89,7 @@ def get_keywords_prompt(content, existing_roles="", is_lean_content=False):
     - UI References: "toggle", "button", "click", "Preview", "Import", "Run".
     - Placeholders: "table name", "S3 bucket name", "SQL template".
     - SQL Keywords or Release Status Terms.
+    - Code artifacts, file paths, or version numbers (e.g., /opt/alation, 5.9.x, V R5).
     {roles_to_exclude_instruction}
 
     **Page Content**:
@@ -186,7 +187,13 @@ def enrich_data_with_ai(dataframe, user_roles, topics, functional_areas, api_key
         is_lean = len(content.split()) < 150
         prompt = get_keywords_prompt(content, existing_roles=current_roles, is_lean_content=is_lean)
         ai_response = call_ai_provider(prompt, api_key, provider, hf_model_id)
-        df_to_process.loc[index, 'Keywords'] = f'"{ai_response}"'
+        
+        # CHANGE START: Parse URL for versions to keep and pass to cleaner
+        versions_in_url = re.findall(r'(?i)(V\s?R?\d+)\b', url)
+        cleaned_ai_response = clean_keywords(ai_response, versions_to_keep=versions_in_url)
+        # CHANGE END
+        
+        df_to_process.loc[index, 'Keywords'] = f'"{cleaned_ai_response}"'
         time.sleep(1)
 
     return df_to_process
@@ -233,17 +240,9 @@ def extract_main_content(soup):
     """
     if not soup: return "Content Not Available"
 
-    # A prioritized list of CSS selectors to find the main content block
     selectors = [
-        'article',
-        'main',
-        'div[role="main"]',
-        '#main-content',
-        '#content',
-        '.main-content',
-        '.content',
-        '#main',
-        '.main'
+        'article', 'main', 'div[role="main"]', '#main-content', '#content',
+        '.main-content', '.content', '#main', '.main'
     ]
 
     main_content = None
@@ -256,14 +255,11 @@ def extract_main_content(soup):
         main_content = soup.body
 
     if main_content:
-        # Decompose common non-content elements
         for element in main_content.find_all(['nav', 'header', 'footer', 'aside', 'script', 'style', 'form']):
             element.decompose()
         
-        # CHANGE START: Decompose code blocks to prevent code-related keywords
         for element in main_content.find_all(['pre', 'code']):
             element.decompose()
-        # CHANGE END
             
         return main_content.get_text(separator=' ', strip=True)
 
@@ -273,6 +269,37 @@ def find_items_in_text(text, items):
     if not isinstance(text, str): return ""
     found_items = sorted([item for item in items if re.search(r'\b' + re.escape(item) + r'\b', text, re.IGNORECASE)])
     return ", ".join(found_items)
+
+# CHANGE START: Updated function to preserve specific versions
+def clean_keywords(keywords_string, versions_to_keep=None):
+    """Removes unwanted patterns from keywords, unless they are specified to be kept."""
+    if not keywords_string:
+        return ""
+    if versions_to_keep is None:
+        versions_to_keep = []
+    
+    # Make the comparison case-insensitive
+    versions_to_keep_lower = [v.lower().replace(" ", "") for v in versions_to_keep]
+
+    # Regex to find version numbers (e.g., 5.9.x, V R5), file paths, and log files
+    version_pattern = re.compile(r'(?i)^\s*(v\s*r\d\b|(\d+\.){1,}\w+)\s*$')
+    path_pattern = re.compile(r'^/.*|.*\.log$')
+
+    original_keywords = [k.strip() for k in keywords_string.split(',') if k.strip()]
+    cleaned_keywords = []
+
+    for keyword in original_keywords:
+        # First, check if it's a version we explicitly want to keep
+        if keyword.lower().replace(" ", "") in versions_to_keep_lower:
+            cleaned_keywords.append(keyword)
+            continue
+
+        # If not, apply the exclusion rules
+        if not version_pattern.match(keyword) and not path_pattern.match(keyword):
+            cleaned_keywords.append(keyword)
+
+    return ", ".join(cleaned_keywords)
+# CHANGE END
 
 # --- STREAMLIT UI ---
 
