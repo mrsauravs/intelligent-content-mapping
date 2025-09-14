@@ -79,8 +79,9 @@ def get_keywords_prompt(content, existing_roles="", is_lean_content=False):
     return f"""
     Perform a deep analysis of the following 'Page Content'. Your task is to {keyword_count_instruction} that are central to the document.
 
-    **Critical Formatting Rule**:
+    **Critical Rules**:
     - Your response MUST ONLY be the comma-separated list of keywords. Do not add labels or explanations.
+    - Keywords MUST be derived exclusively from the provided 'Page Content'. Do not infer or add related concepts that are not explicitly discussed in the text.
 
     **Exclusion Rules (Do Not Include)**:
     - Generic Terms: "documentation", "overview", "guide", "prerequisites", "steps", "introduction".
@@ -174,10 +175,9 @@ def enrich_data_with_ai(dataframe, user_roles, topics, functional_areas, api_key
         prompt = get_mapping_prompt(content, 'Functional Area', functional_areas)
         ai_response = call_ai_provider(prompt, api_key, provider, hf_model_id)
         
-        # CHANGE START: Enforce a single, unique value for Functional Area
+        # Enforce a single, unique value for Functional Area
         if ',' in ai_response:
             ai_response = ai_response.split(',')[0].strip()
-        # CHANGE END
         
         df_to_process.loc[index, 'Functional Area'] = ai_response
         time.sleep(1)
