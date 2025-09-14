@@ -8,6 +8,7 @@ import time
 import google.generativeai as genai
 from openai import OpenAI
 from huggingface_hub import InferenceClient
+from collections import defaultdict
 
 # A set of common English stop words to filter from the final keyword list
 STOP_WORDS = set([
@@ -167,6 +168,27 @@ def get_seo_keywords_prompt(existing_keywords, page_title):
     **Your Response (up to 5 additional SEO keywords)**:
     """
 
+def get_disambiguation_prompt(ambiguous_keyword, page_titles):
+    """Creates a prompt to generate more specific, differentiating keywords."""
+    titles_str = "\n".join([f"- {title}" for title in page_titles])
+    return f"""
+    The following technical keyword is ambiguous because it is associated with multiple distinct pages: "{ambiguous_keyword}".
+
+    Your task is to analyze the page titles below and suggest a more specific, unique keyword for each page to help differentiate them in search results.
+
+    **Page Titles Associated with "{ambiguous_keyword}"**:
+    ---
+    {titles_str}
+    ---
+
+    **Instructions**:
+    - For each page title, provide one more specific keyword or phrase.
+    - Format your response as a list, with each line containing the original page title followed by "::", and then your new suggested keyword.
+    - Example: `Original Page Title::Suggested Differentiating Keyword`
+
+    **Your Response**:
+    """
+
 # --- CENTRALIZED AI API CALLER WITH SANITIZATION ---
 
 def call_ai_provider(prompt, api_key, provider, hf_model_id=None):
@@ -183,7 +205,7 @@ def call_ai_provider(prompt, api_key, provider, hf_model_id=None):
             response_text = response.choices[0].message.content
         elif provider == "Hugging Face":
             client = InferenceClient(token=api_key)
-            response = client.text_generation(prompt, model=hf_model_id, max_new_tokens=128)
+            response = client.text_generation(prompt, model=hf_model_id, max_new_tokens=256)
             response_text = response
     except Exception as e:
         st.warning(f"AI API call failed: {e}")
@@ -265,62 +287,132 @@ def enrich_data_with_ai(dataframe, user_roles, topics, functional_areas, api_key
             all_keywords.extend([k.strip() for k in seo_keys.split(',') if k.strip()])
             time.sleep(1)
 
-        # Create a set of all existing metadata terms for this row to avoid duplication in keywords
-        existing_metadata_terms = set()
-        for col in ['Deployment Type', 'User Role', 'Topics', 'Functional Area']:
-            if col in df_to_process.columns and pd.notna(df_to_process.loc[index, col]):
-                terms = [term.strip().lower() for term in df_to_process.loc[index, col].split(',') if term.strip()]
-                existing_metadata_terms.update(terms)
-
-        # Remove duplicates case-insensitively, preserving original case and handling spacing
-        unique_keywords_cased = []
-        seen_keywords_normalized = set()
-        for keyword in all_keywords:
-            normalized_keyword = keyword.lower().replace(" ", "")
-            if normalized_keyword not in seen_keywords_normalized:
-                unique_keywords_cased.append(keyword)
-                seen_keywords_normalized.add(normalized_keyword)
-        
-        # New, more robust subset filter
-        sorted_by_len = sorted(unique_keywords_cased, key=len)
-        subset_filtered_keywords = []
-        for i, shorter_kw in enumerate(sorted_by_len):
-            is_subset = False
-            for longer_kw in sorted_by_len[i+1:]:
-                if re.search(r'\b' + re.escape(shorter_kw) + r'\b', longer_kw, re.IGNORECASE):
-                    is_subset = True
-                    break
-            if not is_subset:
-                subset_filtered_keywords.append(shorter_kw)
-
-        # Programmatically filter out unwanted patterns
-        vague_identifier_pattern = re.compile(r'^[a-zA-Z]+-\d+$')
-        command_flag_pattern = re.compile(r'^--?[a-zA-Z0-9-]+$')
-        placeholder_filename_pattern = re.compile(r'\w*####\.\w+')
-        example_hostname_pattern = re.compile(r'.*\.(alation-test|example|your-company)\.com$')
-        filepath_pattern = re.compile(r'.*/.*')
-        filename_pattern = re.compile(r'.*\.(py|sh|log|conf|gz|deb|rpm|json|xml|yaml|yml)$')
-
-
-        final_keywords = []
-        for kw in subset_filtered_keywords:
-            kw_lower = kw.lower()
-            if (kw_lower not in STOP_WORDS and 
-                kw_lower not in GENERIC_CONCEPTS_TO_REMOVE and
-                kw_lower not in COMMON_COMMANDS_TO_REMOVE and
-                kw_lower not in existing_metadata_terms and
-                not vague_identifier_pattern.match(kw) and 
-                not command_flag_pattern.match(kw) and
-                not placeholder_filename_pattern.match(kw_lower) and
-                not example_hostname_pattern.match(kw_lower) and
-                not filepath_pattern.match(kw) and
-                not filename_pattern.match(kw_lower) and
-                not kw.startswith('.')):
-                final_keywords.append(kw)
-        
-        df_to_process.loc[index, 'Keywords'] = f'"{", ".join(final_keywords)}"'
+        # Final Cleaning and Deduplication
+        df_to_process.loc[index, 'Keywords'] = f'"{", ".join(clean_and_filter_keywords(all_keywords, row, df_to_process))}"'
         
     return df_to_process
+
+def clean_and_filter_keywords(keywords_list, current_row, dataframe):
+    """A comprehensive function to clean, deduplicate, and filter keywords based on multiple rules."""
+    
+    # Create a set of all existing metadata terms for this row to avoid duplication
+    existing_metadata_terms = set()
+    for col in ['Deployment Type', 'User Role', 'Topics', 'Functional Area']:
+        if col in dataframe.columns and pd.notna(current_row.get(col)):
+            terms = [term.strip().lower() for term in current_row[col].split(',') if term.strip()]
+            existing_metadata_terms.update(terms)
+
+    # 1. Remove duplicates case-insensitively, preserving original case and handling spacing
+    unique_keywords_cased = []
+    seen_keywords_normalized = set()
+    for keyword in keywords_list:
+        normalized_keyword = keyword.lower().replace(" ", "")
+        if normalized_keyword not in seen_keywords_normalized:
+            unique_keywords_cased.append(keyword)
+            seen_keywords_normalized.add(normalized_keyword)
+    
+    # 2. Robust subset filter
+    sorted_by_len = sorted(unique_keywords_cased, key=len)
+    subset_filtered_keywords = []
+    for i, shorter_kw in enumerate(sorted_by_len):
+        is_subset = False
+        for longer_kw in sorted_by_len[i+1:]:
+            if re.search(r'\b' + re.escape(shorter_kw) + r'\b', longer_kw, re.IGNORECASE):
+                is_subset = True
+                break
+        if not is_subset:
+            subset_filtered_keywords.append(shorter_kw)
+
+    # 3. Final programmatic filtering for unwanted patterns
+    vague_identifier_pattern = re.compile(r'^[a-zA-Z]+-\d+$')
+    command_flag_pattern = re.compile(r'^--?[a-zA-Z0-9-]+$')
+    placeholder_filename_pattern = re.compile(r'\w*####\.\w+')
+    example_hostname_pattern = re.compile(r'.*\.(alation-test|example|your-company)\.com$')
+    filepath_pattern = re.compile(r'.*/.*')
+    filename_pattern = re.compile(r'.*\.(py|sh|log|conf|gz|deb|rpm|json|xml|yaml|yml)$')
+
+    final_keywords = []
+    for kw in subset_filtered_keywords:
+        kw_lower = kw.lower()
+        if (kw_lower not in STOP_WORDS and 
+            kw_lower not in GENERIC_CONCEPTS_TO_REMOVE and
+            kw_lower not in COMMON_COMMANDS_TO_REMOVE and
+            kw_lower not in existing_metadata_terms and
+            not vague_identifier_pattern.match(kw) and 
+            not command_flag_pattern.match(kw) and
+            not placeholder_filename_pattern.match(kw_lower) and
+            not example_hostname_pattern.match(kw_lower) and
+            not filepath_pattern.match(kw) and
+            not filename_pattern.match(kw_lower) and
+            not kw.startswith('.')):
+            final_keywords.append(kw)
+    
+    return final_keywords
+
+def analyze_and_refine_uniqueness(dataframe, api_key, provider, hf_model_id=None):
+    """Analyzes keyword uniqueness across all pages and refines ambiguous keywords."""
+    df = dataframe.copy()
+    if 'Keywords' not in df.columns:
+        return df, "No keywords to analyze."
+
+    # Invert the data: map each keyword to a list of page titles
+    keyword_to_pages = defaultdict(list)
+    for index, row in df.iterrows():
+        keywords = [k.strip() for k in row['Keywords'].replace('"', '').split(',') if k.strip()]
+        for kw in keywords:
+            keyword_to_pages[kw].append(row['Page Title'])
+    
+    # Identify ambiguous keywords (used on more than one page)
+    ambiguous_keywords = {kw: pages for kw, pages in keyword_to_pages.items() if len(pages) > 1}
+    
+    if not ambiguous_keywords:
+        df['Uniqueness Score'] = "100%"
+        return df, "All keywords are unique. No refinement needed."
+        
+    st.warning(f"Found {len(ambiguous_keywords)} ambiguous keywords. Attempting to refine...")
+
+    # AI-powered disambiguation
+    refined_keywords_map = {} # {page_title: [new_keywords]}
+    for kw, titles in ambiguous_keywords.items():
+        prompt = get_disambiguation_prompt(kw, titles)
+        response = call_ai_provider(prompt, api_key, provider, hf_model_id)
+        time.sleep(1)
+        for line in response.split('\n'):
+            if '::' in line:
+                title, new_keyword = line.split('::', 1)
+                if title.strip() not in refined_keywords_map:
+                    refined_keywords_map[title.strip()] = []
+                refined_keywords_map[title.strip()].append(new_keyword.strip())
+
+    # Update the dataframe with refined keywords
+    for index, row in df.iterrows():
+        if row['Page Title'] in refined_keywords_map:
+            current_keywords = [k.strip() for k in row['Keywords'].replace('"', '').split(',') if k.strip()]
+            new_suggestions = refined_keywords_map[row['Page Title']]
+            # Remove ambiguous terms and add new, more specific ones
+            ambiguous_for_this_page = [kw for kw in current_keywords if kw in ambiguous_keywords]
+            updated_keywords = [kw for kw in current_keywords if kw not in ambiguous_for_this_page]
+            updated_keywords.extend(new_suggestions)
+            df.loc[index, 'Keywords'] = f'"{", ".join(list(dict.fromkeys(updated_keywords)))}"'
+            
+    # Recalculate uniqueness score
+    keyword_to_pages_final = defaultdict(list)
+    for index, row in df.iterrows():
+        keywords = [k.strip() for k in row['Keywords'].replace('"', '').split(',') if k.strip()]
+        for kw in keywords:
+            keyword_to_pages_final[kw].append(row['Page Title'])
+    
+    df['Uniqueness Score'] = df.apply(lambda row: f"{calculate_uniqueness(row, keyword_to_pages_final):.0f}%", axis=1)
+    
+    return df, f"Refined {len(ambiguous_keywords)} ambiguous keywords."
+
+def calculate_uniqueness(row, keyword_map):
+    """Calculates the percentage of unique keywords for a given row."""
+    keywords = [k.strip() for k in row['Keywords'].replace('"', '').split(',') if k.strip()]
+    if not keywords:
+        return 0
+    unique_count = sum(1 for kw in keywords if len(keyword_map[kw]) == 1)
+    return (unique_count / len(keywords)) * 100
 
 # --- UTILITY AND SCRAPING FUNCTIONS ---
 
@@ -374,12 +466,13 @@ def find_items_in_text(text, items):
 
 st.set_page_config(layout="wide")
 st.title("📄 AI-Powered Content Mapper")
-st.markdown("A five-step tool to scrape, map, and enrich web content using focused AI tasks.")
+st.markdown("A multi-step tool to scrape, map, enrich, and refine web content using focused AI tasks.")
 
 if 'df1' not in st.session_state: st.session_state.df1 = pd.DataFrame()
 if 'df2' not in st.session_state: st.session_state.df2 = pd.DataFrame()
 if 'df3' not in st.session_state: st.session_state.df3 = pd.DataFrame()
 if 'df_final' not in st.session_state: st.session_state.df_final = pd.DataFrame()
+if 'df_refined' not in st.session_state: st.session_state.df_refined = pd.DataFrame()
 if 'user_roles' not in st.session_state: st.session_state.user_roles = None
 if 'topics' not in st.session_state: st.session_state.topics = None
 if 'functional_areas' not in st.session_state: st.session_state.functional_areas = None
@@ -404,7 +497,7 @@ with st.expander("Step 1: Scrape URLs and Content", expanded=True):
                     data.update({'Page Content': 'Fetch Error', 'Section Titles': '', 'Code Content': ''})
                 results.append(data)
             st.session_state.df1 = pd.DataFrame(results)
-            st.session_state.df2, st.session_state.df3, st.session_state.df_final = pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+            st.session_state.df2, st.session_state.df3, st.session_state.df_final, st.session_state.df_refined = pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
             st.session_state.user_roles, st.session_state.topics, st.session_state.functional_areas = None, None, None
             st.success("✅ Step 1 complete!")
         else:
@@ -509,28 +602,77 @@ with st.expander("Step 5: Enrich Data with AI", expanded=True):
                     ai_provider, 
                     hf_model_id
                 )
-            st.success("✅ AI enrichment complete! The final report is ready.")
+            st.success("✅ AI enrichment complete! You can now download the report below or proceed to Step 6 for uniqueness analysis.")
+            st.session_state.df_refined = pd.DataFrame() # Reset refined df
+
+    if not st.session_state.df_final.empty:
+        csv_data_step5 = st.session_state.df_final.to_csv(index=False).encode('utf-8-sig')
+        st.download_button("📥 Download Enriched Report (from Step 5)", csv_data_step5, "enriched_report_step5.csv", "text/csv")
+
+# Step 6: Uniqueness Analysis
+with st.expander("Step 6: Uniqueness Analysis and Refinement", expanded=True):
+    is_disabled = st.session_state.df_final.empty
+    if is_disabled: st.info("Complete Step 5 to enable this step.")
+
+    # Re-use the API credentials from Step 5
+    ai_provider_step6 = st.selectbox("Choose AI Provider", ["Google Gemini", "OpenAI (GPT-4)", "Hugging Face"], disabled=is_disabled, key="step6_provider")
+    api_key_label_step6 = "API Key" if ai_provider_step6 != "Hugging Face" else "Hugging Face User Access Token"
+    api_key_step6 = st.text_input(f"Enter your {api_key_label_step6}", type="password", disabled=is_disabled, key="step6_apikey")
+    hf_model_id_step6 = None
+    if ai_provider_step6 == "Hugging Face":
+        hf_model_id_step6 = st.text_input("Enter Hugging Face Model ID", help="e.g., mistralai/Mistral-7B-Instruct-v0.2", disabled=is_disabled, key="step6_hf_model")
+
+    if st.button("🔍 Analyze and Refine Uniqueness", disabled=is_disabled):
+        if not api_key_step6: st.warning(f"Please enter your {api_key_label_step6}.")
+        elif ai_provider_step6 == "Hugging Face" and not hf_model_id_step6: st.warning("Please enter a Hugging Face Model ID.")
+        else:
+            with st.spinner("Analyzing keyword uniqueness and refining with AI..."):
+                df_refined, message = analyze_and_refine_uniqueness(st.session_state.df_final, api_key_step6, ai_provider_step6, hf_model_id_step6)
+                st.session_state.df_refined = df_refined
+                st.success(f"✅ {message}")
+    
+    if not st.session_state.df_refined.empty:
+        csv_data_step6 = st.session_state.df_refined.to_csv(index=False).encode('utf-8-sig')
+        st.download_button("📥 Download Refined Report (from Step 6)", csv_data_step6, "refined_report_step6.csv", "text/csv")
+
 
 # --- RESULTS DISPLAY ---
 
 st.markdown("---")
-st.subheader("📊 Results")
+st.subheader("📊 Results Editor")
+st.info("The table below is interactive. You can make manual edits to the data before downloading the final report.")
+
 df_to_show = pd.DataFrame()
-if not st.session_state.df_final.empty:
+current_data_key = None
+
+if not st.session_state.df_refined.empty:
+    df_to_show = st.session_state.df_refined
+    current_data_key = 'df_refined'
+elif not st.session_state.df_final.empty:
     df_to_show = st.session_state.df_final
+    current_data_key = 'df_final'
 elif not st.session_state.df3.empty:
     df_to_show = st.session_state.df3
+    current_data_key = 'df3'
 elif not st.session_state.df2.empty:
     df_to_show = st.session_state.df2
+    current_data_key = 'df2'
 elif not st.session_state.df1.empty:
     df_to_show = st.session_state.df1
+    current_data_key = 'df1'
 
 if not df_to_show.empty:
-    final_columns = ['Page Title', 'Page URL', 'Deployment Type', 'User Role', 'Functional Area', 'Topics', 'Keywords']
+    final_columns = ['Page Title', 'Page URL', 'Deployment Type', 'User Role', 'Functional Area', 'Topics', 'Keywords', 'Uniqueness Score']
     display_columns = [col for col in final_columns if col in df_to_show.columns]
     
-    st.dataframe(df_to_show[display_columns])
-    csv_data = df_to_show[display_columns].to_csv(index=False).encode('utf-8-sig')
-    st.download_button("📥 Download Report (CSV)", csv_data, "enriched_report.csv", "text/csv")
+    edited_df = st.data_editor(df_to_show[display_columns], key="data_editor", num_rows="dynamic")
+
+    if st.button("💾 Save Manual Edits"):
+        # When saved, update the session state with the edited dataframe
+        if current_data_key:
+            st.session_state[current_data_key] = edited_df
+            st.success("Your edits have been saved! You can now download the updated report from the relevant step.")
+            time.sleep(2) # Give user time to read the message
+            st.rerun() # Rerun to reflect changes immediately
 else:
     st.write("Upload a file in Step 1 to begin.")
