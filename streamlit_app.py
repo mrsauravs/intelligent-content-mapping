@@ -90,7 +90,7 @@ def get_prose_keywords_prompt(content):
     - Prefer the full, specific names of technologies or frameworks (e.g., "Open Connector Framework" is better than "Open Connector").
     - Avoid generic acronyms (e.g., "DB") if a more specific term (e.g., "MongoDB") is available.
     - Do not include common English stop words (e.g., 'the', 'is', 'for', 'does').
-    - Do not include vague internal identifiers (e.g., 'pg-1', 'server-01') or overly generic terms ("Version", "Memory", "Alation").
+    - Do not include vague internal identifiers (e.g., 'pg-1', 'server-01'), example hostnames (e.g., mycatalog.alation-test.com), or overly generic terms ("Version", "Memory", "Alation").
 
     **Prose Content**:
     ---
@@ -125,11 +125,12 @@ def get_titles_keywords_prompt(titles_list):
 def get_code_keywords_prompt(code_content):
     """Creates a refined prompt for extracting keywords from code blocks."""
     return f"""
-    Analyze the following code snippets. Your task is to extract up to 5 of the most relevant technical keywords. Keywords can include important filenames, commands, or technologies.
+    Analyze the following code snippets. Your task is to extract up to 5 of the most relevant technical keywords. Keywords should represent technologies or concepts.
 
     **Critical Rules**:
     - Your response MUST ONLY be a comma-separated list.
     - Keywords should ideally be 1-3 words long.
+    - You MUST exclude all file paths (e.g., /opt/alation/) and specific script names (e.g., reset_checkpoint.py).
     - Avoid generic command-line utilities like `sudo` or `rpm`, and standalone flags like `-h` or `-i`.
 
     **Code Content**:
@@ -138,6 +139,32 @@ def get_code_keywords_prompt(code_content):
     ---
 
     **Your Response (up to 5 keywords)**:
+    """
+
+def get_seo_keywords_prompt(existing_keywords, page_title):
+    """Creates a prompt for generating SEO-relevant keywords based on existing context."""
+    existing_keywords_str = ", ".join(existing_keywords)
+    return f"""
+    Analyze the following page title and list of existing technical keywords. Your task is to act as an SEO expert and suggest up to 5 additional, related technical keywords or concepts that a user might search for to find this content, even if they are not in the text.
+
+    **Critical Rules**:
+    - Your response MUST ONLY be a comma-separated list.
+    - The suggested keywords should be technically relevant and complementary to the existing keywords.
+    - Do not repeat any keywords already present in the "Existing Keywords" list.
+    - Keywords should ideally be 1-3 words long.
+    - Do not suggest generic terms, stop words, or file paths.
+
+    **Page Title**:
+    ---
+    {page_title}
+    ---
+
+    **Existing Keywords (for context)**:
+    ---
+    {existing_keywords_str}
+    ---
+
+    **Your Response (up to 5 additional SEO keywords)**:
     """
 
 # --- CENTRALIZED AI API CALLER WITH SANITIZATION ---
@@ -229,6 +256,21 @@ def enrich_data_with_ai(dataframe, user_roles, topics, functional_areas, api_key
         # 4. Get keywords from URL (programmatic)
         url_keys = re.findall(r'(?i)(V\s?R?\d+)\b', url)
         all_keywords.extend(url_keys)
+        
+        # 5. Get SEO keywords from AI's knowledge base
+        if all_keywords:
+            page_title = row['Page Title']
+            prompt = get_seo_keywords_prompt(all_keywords, page_title)
+            seo_keys = call_ai_provider(prompt, api_key, provider, hf_model_id)
+            all_keywords.extend([k.strip() for k in seo_keys.split(',') if k.strip()])
+            time.sleep(1)
+
+        # Create a set of all existing metadata terms for this row to avoid duplication in keywords
+        existing_metadata_terms = set()
+        for col in ['Deployment Type', 'User Role', 'Topics', 'Functional Area']:
+            if col in df_to_process.columns and pd.notna(df_to_process.loc[index, col]):
+                terms = [term.strip().lower() for term in df_to_process.loc[index, col].split(',') if term.strip()]
+                existing_metadata_terms.update(terms)
 
         # Remove duplicates case-insensitively, preserving original case and handling spacing
         unique_keywords_cased = []
@@ -255,6 +297,10 @@ def enrich_data_with_ai(dataframe, user_roles, topics, functional_areas, api_key
         vague_identifier_pattern = re.compile(r'^[a-zA-Z]+-\d+$')
         command_flag_pattern = re.compile(r'^--?[a-zA-Z0-9-]+$')
         placeholder_filename_pattern = re.compile(r'\w*####\.\w+')
+        example_hostname_pattern = re.compile(r'.*\.(alation-test|example|your-company)\.com$')
+        filepath_pattern = re.compile(r'.*/.*')
+        filename_pattern = re.compile(r'.*\.(py|sh|log|conf|gz|deb|rpm|json|xml|yaml|yml)$')
+
 
         final_keywords = []
         for kw in subset_filtered_keywords:
@@ -262,9 +308,13 @@ def enrich_data_with_ai(dataframe, user_roles, topics, functional_areas, api_key
             if (kw_lower not in STOP_WORDS and 
                 kw_lower not in GENERIC_CONCEPTS_TO_REMOVE and
                 kw_lower not in COMMON_COMMANDS_TO_REMOVE and
+                kw_lower not in existing_metadata_terms and
                 not vague_identifier_pattern.match(kw) and 
                 not command_flag_pattern.match(kw) and
                 not placeholder_filename_pattern.match(kw_lower) and
+                not example_hostname_pattern.match(kw_lower) and
+                not filepath_pattern.match(kw) and
+                not filename_pattern.match(kw_lower) and
                 not kw.startswith('.')):
                 final_keywords.append(kw)
         
@@ -423,7 +473,7 @@ with st.expander("Step 3: Upload and Map Topics", expanded=True):
 # Step 4: Functional Areas
 with st.expander("Step 4: Upload Functional Areas", expanded=True):
     is_disabled = st.session_state.df3.empty
-    if is_disabled: st.info("Complete Step 3 to proceed.")
+    if is_disabled: st.info("Complete Step 4 to proceed.")
     areas_file = st.file_uploader("Upload Functional Areas File (.txt)", key="step4", disabled=is_disabled)
     if areas_file is not None and not is_disabled:
         st.session_state.functional_areas = [line.strip() for line in io.StringIO(areas_file.getvalue().decode("utf-8")) if line.strip()]
