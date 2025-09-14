@@ -17,10 +17,10 @@ STOP_WORDS = set([
 ])
 
 # A set of overly generic standalone concepts to filter from the final keyword list
-GENERIC_CONCEPTS_TO_REMOVE = {"version", "memory"}
+GENERIC_CONCEPTS_TO_REMOVE = {"version", "memory", "alation"}
 
 # A set of common command-line utilities to filter from the final keyword list
-COMMON_COMMANDS_TO_REMOVE = {"sudo", "rpm", "sh", "bash", "chmod", "chown"}
+COMMON_COMMANDS_TO_REMOVE = {"sudo", "rpm", "sh", "bash", "chmod", "chown", "df", "dpkg"}
 
 
 # --- FOCUSED AI PROMPT FUNCTIONS ---
@@ -88,7 +88,7 @@ def get_prose_keywords_prompt(content):
     - Your response MUST ONLY be a comma-separated list.
     - Keywords should ideally be 1-3 words long. Avoid long descriptive phrases.
     - Do not include common English stop words (e.g., 'the', 'is', 'for', 'does').
-    - Do not include vague internal identifiers (e.g., 'pg-1', 'server-01') or overly generic terms ("Version", "Memory").
+    - Do not include vague internal identifiers (e.g., 'pg-1', 'server-01') or overly generic terms ("Version", "Memory", "Alation").
 
     **Prose Content**:
     ---
@@ -108,7 +108,7 @@ def get_titles_keywords_prompt(titles_list):
     - Your response MUST ONLY be a comma-separated list.
     - Keywords should ideally be 1-3 words long. Avoid long descriptive phrases.
     - Do not include common English stop words (e.g., 'the', 'is', 'for', 'does').
-    - Do not include vague internal identifiers (e.g., 'pg-1', 'server-01') or overly generic terms ("Version", "Memory").
+    - Do not include vague internal identifiers (e.g., 'pg-1', 'server-01') or overly generic terms ("Version", "Memory", "Alation").
 
     **Section Titles**:
     ---
@@ -126,7 +126,7 @@ def get_code_keywords_prompt(code_content):
     **Critical Rules**:
     - Your response MUST ONLY be a comma-separated list.
     - Keywords should ideally be 1-3 words long.
-    - Avoid generic command-line utilities like `sudo` or `rpm`.
+    - Avoid generic command-line utilities like `sudo` or `rpm`, and standalone flags like `-h` or `-i`.
 
     **Code Content**:
     ---
@@ -244,8 +244,9 @@ def enrich_data_with_ai(dataframe, user_roles, topics, functional_areas, api_key
         
         subset_filtered_keywords = [kw for kw in unique_keywords_cased if kw not in keywords_to_remove]
 
-        # Programmatically filter out stop words, vague identifiers, dotfiles, generic concepts, and common commands
+        # Programmatically filter out stop words, vague identifiers, dotfiles, generic concepts, and common commands/flags
         vague_identifier_pattern = re.compile(r'^[a-zA-Z]+-\d+$')
+        command_flag_pattern = re.compile(r'^--?[a-zA-Z0-9-]+$') # Matches -h, --help, etc.
         final_keywords = []
         for kw in subset_filtered_keywords:
             kw_lower = kw.lower()
@@ -253,6 +254,7 @@ def enrich_data_with_ai(dataframe, user_roles, topics, functional_areas, api_key
                 kw_lower not in GENERIC_CONCEPTS_TO_REMOVE and
                 kw_lower not in COMMON_COMMANDS_TO_REMOVE and
                 not vague_identifier_pattern.match(kw) and 
+                not command_flag_pattern.match(kw) and
                 not kw.startswith('.')):
                 final_keywords.append(kw)
         
