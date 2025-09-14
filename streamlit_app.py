@@ -65,45 +65,61 @@ def get_mapping_prompt(content, column_name, options_list, url=None):
     **Your Response**:
     """
 
-def get_keywords_prompt(content, existing_roles="", is_lean_content=False):
-    """Creates a focused prompt for generating keywords."""
-    
-    keyword_count_instruction = "generate a list of exactly 20 comma-separated, unique technical keywords"
-    if is_lean_content:
-        keyword_count_instruction = "generate a list of 5 or less comma-separated, unique technical keywords"
-
-    roles_to_exclude_instruction = ""
-    if existing_roles:
-        roles_to_exclude_instruction = f"""- **Critical Exclusion**: Do not include any of the following terms in your keyword list, as they are already categorized as user roles: {existing_roles}."""
-
+def get_prose_keywords_prompt(content):
+    """Creates a focused prompt for extracting keywords from prose."""
     return f"""
-    Perform a deep analysis of the following 'Page Content'. Your task is to {keyword_count_instruction} that are central to the document.
+    Analyze the following prose from a technical document. Your task is to extract up to 5 of the most important, non-generic technical keywords that are central to the text.
 
     **Critical Rules**:
-    - Your response MUST ONLY be the comma-separated list of keywords. Do not add labels or explanations.
-    - Keywords MUST be derived exclusively from the provided 'Page Content'. Do not infer or add related concepts that are not explicitly discussed in the text.
+    - Your response MUST ONLY be a comma-separated list of keywords.
+    - Exclude generic terms, version numbers, file paths, and UI elements.
 
-    **Exclusion Rules (Do Not Include)**:
-    - Generic Terms: "documentation", "overview", "guide", "prerequisites", "steps", "introduction".
-    - Broad Terms: "ports", "load balancers", "proxy servers", "customer-managed", "Alation Cloud Service", "data catalog".
-    - UI References: "toggle", "button", "click", "Preview", "Import", "Run".
-    - Placeholders: "table name", "S3 bucket name", "SQL template".
-    - SQL Keywords or Release Status Terms.
-    - Code artifacts, file paths, or version numbers (e.g., /opt/alation, 5.9.x, V R5).
-    {roles_to_exclude_instruction}
-
-    **Page Content**:
+    **Prose Content**:
     ---
-    {content[:4000]}
+    {content[:3000]}
     ---
 
-    **Your Response (comma-separated keywords only)**:
+    **Your Response (up to 5 keywords)**:
+    """
+
+def get_titles_keywords_prompt(titles_list):
+    """Creates a focused prompt for extracting keywords from section titles."""
+    titles_str = ", ".join(titles_list)
+    return f"""
+    Analyze the following list of section titles from a technical document. Your task is to extract up to 5 of the most relevant technical keywords from these titles.
+
+    **Critical Rules**:
+    - Your response MUST ONLY be a comma-separated list of keywords.
+    - The keywords should represent the main topics covered in these sections.
+
+    **Section Titles**:
+    ---
+    {titles_str}
+    ---
+
+    **Your Response (up to 5 keywords)**:
+    """
+
+def get_code_keywords_prompt(code_content):
+    """Creates a focused prompt for extracting keywords from code blocks."""
+    return f"""
+    Analyze the following code snippets from a technical document. Your task is to extract up to 5 of the most relevant technical keywords. Keywords can include important filenames, commands, or technologies.
+
+    **Critical Rules**:
+    - Your response MUST ONLY be a comma-separated list of keywords.
+    - Focus on terms that identify a system, process, or technology.
+
+    **Code Content**:
+    ---
+    {code_content[:3000]}
+    ---
+
+    **Your Response (up to 5 keywords)**:
     """
 
 # --- CENTRALIZED AI API CALLER WITH SANITIZATION ---
 
 def call_ai_provider(prompt, api_key, provider, hf_model_id=None):
-    """A single function to handle calls to any selected AI provider and sanitize the response."""
     response_text = ""
     try:
         if provider == "Google Gemini":
@@ -113,19 +129,15 @@ def call_ai_provider(prompt, api_key, provider, hf_model_id=None):
             response_text = response.text
         elif provider == "OpenAI (GPT-4)":
             client = OpenAI(api_key=api_key)
-            response = client.chat.completions.create(
-                model="gpt-4o",
-                messages=[{"role": "user", "content": prompt}]
-            )
+            response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": prompt}])
             response_text = response.choices[0].message.content
         elif provider == "Hugging Face":
             client = InferenceClient(token=api_key)
-            response = client.text_generation(prompt, model=hf_model_id, max_new_tokens=256)
+            response = client.text_generation(prompt, model=hf_model_id, max_new_tokens=128)
             response_text = response
     except Exception as e:
         st.warning(f"AI API call failed: {e}")
         return ""
-
     sanitized_text = response_text.strip().replace('"', '').replace("'", "")
     return sanitized_text
 
@@ -133,69 +145,65 @@ def call_ai_provider(prompt, api_key, provider, hf_model_id=None):
 
 def enrich_data_with_ai(dataframe, user_roles, topics, functional_areas, api_key, provider, hf_model_id=None):
     df_to_process = dataframe.copy()
-    if 'Functional Area' not in df_to_process.columns:
-        df_to_process['Functional Area'] = ''
-    if 'Keywords' not in df_to_process.columns:
-        df_to_process['Keywords'] = ''
+    if 'Functional Area' not in df_to_process.columns: df_to_process['Functional Area'] = ''
+    if 'Keywords' not in df_to_process.columns: df_to_process['Keywords'] = ''
         
     total_rows = len(df_to_process)
     pb = st.progress(0, f"Starting AI enrichment for {total_rows} rows...")
 
     for index, row in df_to_process.iterrows():
         pb.progress((index + 1) / total_rows, f"Processing row {index + 1}/{total_rows}...")
+        
         content = row['Page Content']
-        url = row['Page URL'] 
-
-        # Task 1: Fill Deployment Type if blank
-        if pd.isna(row['Deployment Type']) or row['Deployment Type'] == '' or 'Fetch Error' in str(row['Deployment Type']):
+        url = row['Page URL']
+        
+        if pd.isna(row['Deployment Type']) or row['Deployment Type'] == '':
             prompt = get_deployment_type_prompt(content)
-            ai_response = call_ai_provider(prompt, api_key, provider, hf_model_id)
-            
-            valid_deployment_types = ["Alation Cloud Service", "Customer Managed", "Alation Cloud Service, Customer Managed"]
-            if ai_response in valid_deployment_types:
-                df_to_process.loc[index, 'Deployment Type'] = ai_response
-            else:
-                df_to_process.loc[index, 'Deployment Type'] = ""
+            df_to_process.loc[index, 'Deployment Type'] = call_ai_provider(prompt, api_key, provider, hf_model_id)
             time.sleep(1)
-
-        # Task 2: Fill User Role if blank
+            
         if pd.isna(row['User Role']) or row['User Role'] == '':
             prompt = get_mapping_prompt(content, 'User Role', user_roles)
-            ai_response = call_ai_provider(prompt, api_key, provider, hf_model_id)
-            df_to_process.loc[index, 'User Role'] = ai_response
+            df_to_process.loc[index, 'User Role'] = call_ai_provider(prompt, api_key, provider, hf_model_id)
             time.sleep(1)
 
-        # Task 3: Fill Topics if blank
         if pd.isna(row['Topics']) or row['Topics'] == '':
             prompt = get_mapping_prompt(content, 'Topics', topics, url=url)
-            ai_response = call_ai_provider(prompt, api_key, provider, hf_model_id)
-            df_to_process.loc[index, 'Topics'] = ai_response
+            df_to_process.loc[index, 'Topics'] = call_ai_provider(prompt, api_key, provider, hf_model_id)
             time.sleep(1)
 
-        # Task 4: Always map Functional Area
         prompt = get_mapping_prompt(content, 'Functional Area', functional_areas)
         ai_response = call_ai_provider(prompt, api_key, provider, hf_model_id)
-        
-        if ',' in ai_response:
-            ai_response = ai_response.split(',')[0].strip()
-        
-        df_to_process.loc[index, 'Functional Area'] = ai_response
-        time.sleep(1)
-        
-        # Task 5: Always generate Keywords
-        current_roles = df_to_process.loc[index, 'User Role']
-        is_lean = len(content.split()) < 150
-        prompt = get_keywords_prompt(content, existing_roles=current_roles, is_lean_content=is_lean)
-        ai_response = call_ai_provider(prompt, api_key, provider, hf_model_id)
-        
-        # CHANGE START: Parse URL for versions to keep and pass to cleaner
-        versions_in_url = re.findall(r'(?i)(V\s?R?\d+)\b', url)
-        cleaned_ai_response = clean_keywords(ai_response, versions_to_keep=versions_in_url)
-        # CHANGE END
-        
-        df_to_process.loc[index, 'Keywords'] = f'"{cleaned_ai_response}"'
+        df_to_process.loc[index, 'Functional Area'] = ai_response.split(',')[0].strip() if ',' in ai_response else ai_response
         time.sleep(1)
 
+        # New structured keyword generation pipeline
+        all_keywords = []
+        # 1. Get keywords from prose
+        if pd.notna(row['Page Content']) and row['Page Content']:
+            prompt = get_prose_keywords_prompt(row['Page Content'])
+            prose_keys = call_ai_provider(prompt, api_key, provider, hf_model_id)
+            all_keywords.extend([k.strip() for k in prose_keys.split(',') if k.strip()])
+            time.sleep(1)
+        # 2. Get keywords from titles
+        if pd.notna(row['Section Titles']) and row['Section Titles']:
+            prompt = get_titles_keywords_prompt(row['Section Titles'].split(','))
+            title_keys = call_ai_provider(prompt, api_key, provider, hf_model_id)
+            all_keywords.extend([k.strip() for k in title_keys.split(',') if k.strip()])
+            time.sleep(1)
+        # 3. Get keywords from code
+        if pd.notna(row['Code Content']) and row['Code Content']:
+            prompt = get_code_keywords_prompt(row['Code Content'])
+            code_keys = call_ai_provider(prompt, api_key, provider, hf_model_id)
+            all_keywords.extend([k.strip() for k in code_keys.split(',') if k.strip()])
+            time.sleep(1)
+        # 4. Get keywords from URL (programmatic)
+        url_keys = re.findall(r'(?i)(V\s?R?\d+)\b', url)
+        all_keywords.extend(url_keys)
+
+        final_keywords = list(dict.fromkeys(all_keywords))
+        df_to_process.loc[index, 'Keywords'] = f'"{", ".join(final_keywords)}"'
+        
     return df_to_process
 
 # --- UTILITY AND SCRAPING FUNCTIONS ---
@@ -207,99 +215,44 @@ def analyze_page_content(url):
         response = requests.get(url, headers=headers, timeout=30)
         response.raise_for_status()
         soup = BeautifulSoup(response.text, 'html.parser')
-        title = soup.find('title').get_text().strip() if soup.find('title') else 'No Title Found'
+        title = soup.find('title').get_text(strip=True) if soup.find('title') else 'No Title Found'
         return soup, title
     except requests.exceptions.RequestException as e:
         st.warning(f"Could not fetch {url}: {e}")
         return None, "Fetch Error"
 
-def get_deployment_type_from_scraping(soup):
-    if not soup: return ""
-    text_content = soup.get_text().lower()
-    is_cloud = 'cloud' in text_content
-    is_on_prem = 'customer managed' in text_content or 'on-prem' in text_content
-    
-    if is_cloud and is_on_prem:
-        return "Alation Cloud Service, Customer Managed"
-    if is_cloud:
-        return "Alation Cloud Service"
-    if is_on_prem:
-        return "Customer Managed"
-    
-    if soup.find('p', class_='cloud-label') and soup.find('p', class_='on-prem-label'):
-        return "Alation Cloud Service, Customer Managed"
-    if soup.find('p', class_='cloud-label'):
-        return "Alation Cloud Service"
-    if soup.find('p', class_='on-prem-label'):
-        return "Customer Managed"
-    return ""
+def extract_structured_content(soup):
+    """Separates a webpage's content into prose, titles, and code."""
+    if not soup:
+        return {'prose': "Content Not Available", 'titles': [], 'code': ""}
 
-def extract_main_content(soup):
-    """
-    Extracts text from the main content area of a webpage, ignoring common non-content and code elements.
-    """
-    if not soup: return "Content Not Available"
-
-    selectors = [
-        'article', 'main', 'div[role="main"]', '#main-content', '#content',
-        '.main-content', '.content', '#main', '.main'
-    ]
-
+    selectors = ['article', 'main', 'div[role="main"]', '#main-content', '#content', '.main-content', '.content', '#main', '.main']
     main_content = None
     for selector in selectors:
         main_content = soup.select_one(selector)
-        if main_content:
-            break
-
-    if not main_content:
-        main_content = soup.body
-
-    if main_content:
-        for element in main_content.find_all(['nav', 'header', 'footer', 'aside', 'script', 'style', 'form']):
-            element.decompose()
+        if main_content: break
+    if not main_content: main_content = soup.body
         
-        for element in main_content.find_all(['pre', 'code']):
-            element.decompose()
-            
-        return main_content.get_text(separator=' ', strip=True)
+    if not main_content:
+        return {'prose': "Main Content Not Found", 'titles': [], 'code': ""}
 
-    return "Main Content Not Found"
+    for element in main_content.find_all(['nav', 'header', 'footer', 'aside', 'script', 'style', 'form']):
+        element.decompose()
+    
+    titles = [h.get_text(strip=True) for h in main_content.find_all(['h2', 'h3', 'h4', 'h5'])]
+    code_content = " ".join([code.get_text() for code in main_content.find_all(['pre', 'code'])])
+
+    for element in main_content.find_all(['h2', 'h3', 'h4', 'h5', 'pre', 'code']):
+        element.decompose()
+    
+    prose = main_content.get_text(separator=' ', strip=True)
+
+    return {'prose': prose, 'titles': titles, 'code': code_content}
 
 def find_items_in_text(text, items):
     if not isinstance(text, str): return ""
     found_items = sorted([item for item in items if re.search(r'\b' + re.escape(item) + r'\b', text, re.IGNORECASE)])
     return ", ".join(found_items)
-
-# CHANGE START: Updated function to preserve specific versions
-def clean_keywords(keywords_string, versions_to_keep=None):
-    """Removes unwanted patterns from keywords, unless they are specified to be kept."""
-    if not keywords_string:
-        return ""
-    if versions_to_keep is None:
-        versions_to_keep = []
-    
-    # Make the comparison case-insensitive
-    versions_to_keep_lower = [v.lower().replace(" ", "") for v in versions_to_keep]
-
-    # Regex to find version numbers (e.g., 5.9.x, V R5), file paths, and log files
-    version_pattern = re.compile(r'(?i)^\s*(v\s*r\d\b|(\d+\.){1,}\w+)\s*$')
-    path_pattern = re.compile(r'^/.*|.*\.log$')
-
-    original_keywords = [k.strip() for k in keywords_string.split(',') if k.strip()]
-    cleaned_keywords = []
-
-    for keyword in original_keywords:
-        # First, check if it's a version we explicitly want to keep
-        if keyword.lower().replace(" ", "") in versions_to_keep_lower:
-            cleaned_keywords.append(keyword)
-            continue
-
-        # If not, apply the exclusion rules
-        if not version_pattern.match(keyword) and not path_pattern.match(keyword):
-            cleaned_keywords.append(keyword)
-
-    return ", ".join(cleaned_keywords)
-# CHANGE END
 
 # --- STREAMLIT UI ---
 
@@ -327,9 +280,12 @@ with st.expander("Step 1: Scrape URLs and Content", expanded=True):
                 soup, title = analyze_page_content(url)
                 data = {'Page Title': title, 'Page URL': url}
                 if soup:
-                    data.update({'Deployment Type': get_deployment_type_from_scraping(soup), 'Page Content': extract_main_content(soup)})
+                    structured_content = extract_structured_content(soup)
+                    data['Page Content'] = structured_content['prose']
+                    data['Section Titles'] = ",".join(structured_content['titles'])
+                    data['Code Content'] = structured_content['code']
                 else:
-                    data.update({'Deployment Type': 'Fetch Error', 'Page Content': 'Fetch Error'})
+                    data.update({'Page Content': 'Fetch Error', 'Section Titles': '', 'Code Content': ''})
                 results.append(data)
             st.session_state.df1 = pd.DataFrame(results)
             st.session_state.df2, st.session_state.df3, st.session_state.df_final = pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
