@@ -17,7 +17,7 @@ STOP_WORDS = set([
 ])
 
 # A set of overly generic standalone concepts to filter from the final keyword list
-GENERIC_CONCEPTS_TO_REMOVE = {"version", "memory", "alation"}
+GENERIC_CONCEPTS_TO_REMOVE = {"version", "memory", "alation", "db", "database", "navigation bar"}
 
 # A set of common command-line utilities to filter from the final keyword list
 COMMON_COMMANDS_TO_REMOVE = {"sudo", "rpm", "sh", "bash", "chmod", "chown", "df", "dpkg"}
@@ -87,6 +87,8 @@ def get_prose_keywords_prompt(content):
     **Critical Rules**:
     - Your response MUST ONLY be a comma-separated list.
     - Keywords should ideally be 1-3 words long. Avoid long descriptive phrases.
+    - Prefer the full, specific names of technologies or frameworks (e.g., "Open Connector Framework" is better than "Open Connector").
+    - Avoid generic acronyms (e.g., "DB") if a more specific term (e.g., "MongoDB") is available.
     - Do not include common English stop words (e.g., 'the', 'is', 'for', 'does').
     - Do not include vague internal identifiers (e.g., 'pg-1', 'server-01') or overly generic terms ("Version", "Memory", "Alation").
 
@@ -107,6 +109,8 @@ def get_titles_keywords_prompt(titles_list):
     **Critical Rules**:
     - Your response MUST ONLY be a comma-separated list.
     - Keywords should ideally be 1-3 words long. Avoid long descriptive phrases.
+    - Prefer the full, specific names of technologies or frameworks (e.g., "Open Connector Framework" is better than "Open Connector").
+    - Avoid generic acronyms (e.g., "DB") if a more specific term (e.g., "MongoDB") is available.
     - Do not include common English stop words (e.g., 'the', 'is', 'for', 'does').
     - Do not include vague internal identifiers (e.g., 'pg-1', 'server-01') or overly generic terms ("Version", "Memory", "Alation").
 
@@ -235,18 +239,23 @@ def enrich_data_with_ai(dataframe, user_roles, topics, functional_areas, api_key
                 unique_keywords_cased.append(keyword)
                 seen_keywords_normalized.add(normalized_keyword)
         
-        # Filter out keywords that are subsets of other keywords
-        keywords_to_remove = set()
-        for shorter_kw in unique_keywords_cased:
-            for longer_kw in unique_keywords_cased:
-                if shorter_kw != longer_kw and re.search(r'\b' + re.escape(shorter_kw) + r'\b', longer_kw, re.IGNORECASE):
-                    keywords_to_remove.add(shorter_kw)
-        
-        subset_filtered_keywords = [kw for kw in unique_keywords_cased if kw not in keywords_to_remove]
+        # New, more robust subset filter
+        sorted_by_len = sorted(unique_keywords_cased, key=len)
+        subset_filtered_keywords = []
+        for i, shorter_kw in enumerate(sorted_by_len):
+            is_subset = False
+            for longer_kw in sorted_by_len[i+1:]:
+                if re.search(r'\b' + re.escape(shorter_kw) + r'\b', longer_kw, re.IGNORECASE):
+                    is_subset = True
+                    break
+            if not is_subset:
+                subset_filtered_keywords.append(shorter_kw)
 
-        # Programmatically filter out stop words, vague identifiers, dotfiles, generic concepts, and common commands/flags
+        # Programmatically filter out unwanted patterns
         vague_identifier_pattern = re.compile(r'^[a-zA-Z]+-\d+$')
-        command_flag_pattern = re.compile(r'^--?[a-zA-Z0-9-]+$') # Matches -h, --help, etc.
+        command_flag_pattern = re.compile(r'^--?[a-zA-Z0-9-]+$')
+        placeholder_filename_pattern = re.compile(r'\w*####\.\w+')
+
         final_keywords = []
         for kw in subset_filtered_keywords:
             kw_lower = kw.lower()
@@ -255,6 +264,7 @@ def enrich_data_with_ai(dataframe, user_roles, topics, functional_areas, api_key
                 kw_lower not in COMMON_COMMANDS_TO_REMOVE and
                 not vague_identifier_pattern.match(kw) and 
                 not command_flag_pattern.match(kw) and
+                not placeholder_filename_pattern.match(kw_lower) and
                 not kw.startswith('.')):
                 final_keywords.append(kw)
         
