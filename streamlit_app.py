@@ -9,6 +9,14 @@ import google.generativeai as genai
 from openai import OpenAI
 from huggingface_hub import InferenceClient
 
+# A set of common English stop words to filter from the final keyword list
+STOP_WORDS = set([
+    "a", "an", "the", "and", "or", "but", "if", "in", "on", "at", "to", "for", "with", "by", "of",
+    "is", "are", "was", "were", "be", "been", "being", "have", "has", "had", "do", "does", "did",
+    "will", "can", "should", "would", "could", "its", "it", "i", "me", "my", "we", "our", "you", "your"
+])
+
+
 # --- FOCUSED AI PROMPT FUNCTIONS ---
 
 def get_deployment_type_prompt(content):
@@ -66,13 +74,14 @@ def get_mapping_prompt(content, column_name, options_list, url=None):
     """
 
 def get_prose_keywords_prompt(content):
-    """Creates a focused prompt for extracting keywords from prose."""
+    """Creates a refined prompt for extracting keywords from prose."""
     return f"""
-    Analyze the following prose from a technical document. Your task is to extract up to 5 of the most important, non-generic technical keywords that are central to the text.
+    Analyze the following prose from a technical document. Your task is to extract up to 5 specific, technical nouns or noun phrases representing features, components, or technologies.
 
     **Critical Rules**:
-    - Your response MUST ONLY be a comma-separated list of keywords.
-    - Exclude generic terms, version numbers, file paths, and UI elements.
+    - Your response MUST ONLY be a comma-separated list.
+    - Keywords should ideally be 1-3 words long. Avoid long descriptive phrases.
+    - Do not include common English stop words (e.g., 'the', 'is', 'for', 'does').
 
     **Prose Content**:
     ---
@@ -83,14 +92,15 @@ def get_prose_keywords_prompt(content):
     """
 
 def get_titles_keywords_prompt(titles_list):
-    """Creates a focused prompt for extracting keywords from section titles."""
+    """Creates a refined prompt for extracting keywords from section titles."""
     titles_str = ", ".join(titles_list)
     return f"""
-    Analyze the following list of section titles from a technical document. Your task is to extract up to 5 of the most relevant technical keywords from these titles.
+    Analyze the following list of section titles. Your task is to extract up to 5 specific, technical nouns or noun phrases representing features, components, or technologies.
 
     **Critical Rules**:
-    - Your response MUST ONLY be a comma-separated list of keywords.
-    - The keywords should represent the main topics covered in these sections.
+    - Your response MUST ONLY be a comma-separated list.
+    - Keywords should ideally be 1-3 words long. Avoid long descriptive phrases.
+    - Do not include common English stop words (e.g., 'the', 'is', 'for', 'does').
 
     **Section Titles**:
     ---
@@ -101,13 +111,13 @@ def get_titles_keywords_prompt(titles_list):
     """
 
 def get_code_keywords_prompt(code_content):
-    """Creates a focused prompt for extracting keywords from code blocks."""
+    """Creates a refined prompt for extracting keywords from code blocks."""
     return f"""
     Analyze the following code snippets from a technical document. Your task is to extract up to 5 of the most relevant technical keywords. Keywords can include important filenames, commands, or technologies.
 
     **Critical Rules**:
-    - Your response MUST ONLY be a comma-separated list of keywords.
-    - Focus on terms that identify a system, process, or technology.
+    - Your response MUST ONLY be a comma-separated list.
+    - Keywords should ideally be 1-3 words long.
 
     **Code Content**:
     ---
@@ -183,7 +193,7 @@ def enrich_data_with_ai(dataframe, user_roles, topics, functional_areas, api_key
         df_to_process.loc[index, 'Functional Area'] = ai_response.split(',')[0].strip() if ',' in ai_response else ai_response
         time.sleep(1)
 
-        # New structured keyword generation pipeline
+        # Structured keyword generation pipeline
         all_keywords = []
         # 1. Get keywords from prose
         if pd.notna(row['Page Content']) and row['Page Content']:
@@ -207,7 +217,12 @@ def enrich_data_with_ai(dataframe, user_roles, topics, functional_areas, api_key
         url_keys = re.findall(r'(?i)(V\s?R?\d+)\b', url)
         all_keywords.extend(url_keys)
 
-        final_keywords = list(dict.fromkeys(all_keywords))
+        # Remove duplicates while preserving order
+        unique_keywords = list(dict.fromkeys(all_keywords))
+        
+        # Programmatically filter out stop words from the final list
+        final_keywords = [kw for kw in unique_keywords if kw.lower() not in STOP_WORDS]
+        
         df_to_process.loc[index, 'Keywords'] = f'"{", ".join(final_keywords)}"'
         
     return df_to_process
