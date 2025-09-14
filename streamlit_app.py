@@ -145,8 +145,14 @@ def call_ai_provider(prompt, api_key, provider, hf_model_id=None):
 
 def enrich_data_with_ai(dataframe, user_roles, topics, functional_areas, api_key, provider, hf_model_id=None):
     df_to_process = dataframe.copy()
-    if 'Functional Area' not in df_to_process.columns: df_to_process['Functional Area'] = ''
-    if 'Keywords' not in df_to_process.columns: df_to_process['Keywords'] = ''
+    
+    # Add defensive checks to prevent KeyErrors
+    if 'Deployment Type' not in df_to_process.columns:
+        df_to_process['Deployment Type'] = ''
+    if 'Functional Area' not in df_to_process.columns: 
+        df_to_process['Functional Area'] = ''
+    if 'Keywords' not in df_to_process.columns: 
+        df_to_process['Keywords'] = ''
         
     total_rows = len(df_to_process)
     pb = st.progress(0, f"Starting AI enrichment for {total_rows} rows...")
