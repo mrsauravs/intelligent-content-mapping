@@ -19,6 +19,9 @@ STOP_WORDS = set([
 # A set of overly generic standalone concepts to filter from the final keyword list
 GENERIC_CONCEPTS_TO_REMOVE = {"version", "memory"}
 
+# A set of common command-line utilities to filter from the final keyword list
+COMMON_COMMANDS_TO_REMOVE = {"sudo", "rpm", "sh", "bash", "chmod", "chown"}
+
 
 # --- FOCUSED AI PROMPT FUNCTIONS ---
 
@@ -123,6 +126,7 @@ def get_code_keywords_prompt(code_content):
     **Critical Rules**:
     - Your response MUST ONLY be a comma-separated list.
     - Keywords should ideally be 1-3 words long.
+    - Avoid generic command-line utilities like `sudo` or `rpm`.
 
     **Code Content**:
     ---
@@ -240,12 +244,16 @@ def enrich_data_with_ai(dataframe, user_roles, topics, functional_areas, api_key
         
         subset_filtered_keywords = [kw for kw in unique_keywords_cased if kw not in keywords_to_remove]
 
-        # Programmatically filter out stop words, vague identifiers, dotfiles, and generic concepts
+        # Programmatically filter out stop words, vague identifiers, dotfiles, generic concepts, and common commands
         vague_identifier_pattern = re.compile(r'^[a-zA-Z]+-\d+$')
         final_keywords = []
         for kw in subset_filtered_keywords:
             kw_lower = kw.lower()
-            if kw_lower not in STOP_WORDS and kw_lower not in GENERIC_CONCEPTS_TO_REMOVE and not vague_identifier_pattern.match(kw) and not kw.startswith('.'):
+            if (kw_lower not in STOP_WORDS and 
+                kw_lower not in GENERIC_CONCEPTS_TO_REMOVE and
+                kw_lower not in COMMON_COMMANDS_TO_REMOVE and
+                not vague_identifier_pattern.match(kw) and 
+                not kw.startswith('.')):
                 final_keywords.append(kw)
         
         df_to_process.loc[index, 'Keywords'] = f'"{", ".join(final_keywords)}"'
