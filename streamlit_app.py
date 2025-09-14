@@ -29,7 +29,6 @@ def get_deployment_type_prompt(content):
     **Your Response (choose one from the list)**:
     """
 
-# CHANGE 1, 2, 5 START: Updated mapping prompt to handle new business logic
 def get_mapping_prompt(content, column_name, options_list, url=None):
     """Creates a focused prompt for mapping content to a list of options."""
     
@@ -65,9 +64,7 @@ def get_mapping_prompt(content, column_name, options_list, url=None):
 
     **Your Response**:
     """
-# CHANGE 1, 2, 5 END
 
-# CHANGE 3 & 4 START: Updated keywords prompt for deduplication and lean content
 def get_keywords_prompt(content, existing_roles="", is_lean_content=False):
     """Creates a focused prompt for generating keywords."""
     
@@ -100,7 +97,6 @@ def get_keywords_prompt(content, existing_roles="", is_lean_content=False):
 
     **Your Response (comma-separated keywords only)**:
     """
-# CHANGE 3 & 4 END
 
 # --- CENTRALIZED AI API CALLER WITH SANITIZATION ---
 
@@ -146,7 +142,7 @@ def enrich_data_with_ai(dataframe, user_roles, topics, functional_areas, api_key
     for index, row in df_to_process.iterrows():
         pb.progress((index + 1) / total_rows, f"Processing row {index + 1}/{total_rows}...")
         content = row['Page Content']
-        url = row['Page URL'] # Get URL for prompts
+        url = row['Page URL'] 
 
         # Task 1: Fill Deployment Type if blank
         if pd.isna(row['Deployment Type']) or row['Deployment Type'] == '' or 'Fetch Error' in str(row['Deployment Type']):
@@ -177,15 +173,19 @@ def enrich_data_with_ai(dataframe, user_roles, topics, functional_areas, api_key
         # Task 4: Always map Functional Area
         prompt = get_mapping_prompt(content, 'Functional Area', functional_areas)
         ai_response = call_ai_provider(prompt, api_key, provider, hf_model_id)
+        
+        # CHANGE START: Enforce a single, unique value for Functional Area
+        if ',' in ai_response:
+            ai_response = ai_response.split(',')[0].strip()
+        # CHANGE END
+        
         df_to_process.loc[index, 'Functional Area'] = ai_response
         time.sleep(1)
         
         # Task 5: Always generate Keywords
-        # CHANGE 3 & 4 START: Add logic for lean content and role exclusion
         current_roles = df_to_process.loc[index, 'User Role']
         is_lean = len(content.split()) < 150
         prompt = get_keywords_prompt(content, existing_roles=current_roles, is_lean_content=is_lean)
-        # CHANGE 3 & 4 END
         ai_response = call_ai_provider(prompt, api_key, provider, hf_model_id)
         df_to_process.loc[index, 'Keywords'] = f'"{ai_response}"'
         time.sleep(1)
@@ -291,7 +291,6 @@ with st.expander("Step 2: Upload and Map User Roles", expanded=True):
                 df = st.session_state.df1.copy()
                 df['User Role'] = df['Page Content'].apply(lambda txt: find_items_in_text(txt, st.session_state.user_roles))
                 
-                # CHANGE 1 START: Augment User Roles based on Steward/Composer rule
                 def augment_user_roles(roles_str):
                     if not isinstance(roles_str, str): return ""
                     roles_list = [r.strip() for r in roles_str.split(',') if r.strip()]
@@ -300,7 +299,6 @@ with st.expander("Step 2: Upload and Map User Roles", expanded=True):
                         return ", ".join(sorted(list(set(roles_list))))
                     return roles_str
                 df['User Role'] = df['User Role'].apply(augment_user_roles)
-                # CHANGE 1 END
                 
                 st.session_state.df2 = df
                 st.success("✅ Step 2 complete!")
@@ -319,7 +317,6 @@ with st.expander("Step 3: Upload and Map Topics", expanded=True):
                 df = st.session_state.df2.copy()
                 df['Topics'] = df['Page Content'].apply(lambda txt: find_items_in_text(txt, st.session_state.topics))
                 
-                # CHANGE 2 & 5 START: Add helper functions for topic augmentation
                 def add_topic(current_topics, new_topic):
                     if not isinstance(current_topics, str): current_topics = ""
                     if new_topic in current_topics: return current_topics
@@ -327,10 +324,8 @@ with st.expander("Step 3: Upload and Map Topics", expanded=True):
 
                 def augment_topics(row):
                     topics = row['Topics']
-                    # Rule for URL pattern
                     if "installconfig/Update/" in row['Page URL']:
                         topics = add_topic(topics, "Customer Managed Server Update")
-                    # Rule for authentication content
                     auth_keywords = ['authentication', 'saml', 'sso', 'scim', 'ldap']
                     content_lower = str(row['Page Content']).lower()
                     if any(keyword in content_lower for keyword in auth_keywords):
@@ -338,7 +333,6 @@ with st.expander("Step 3: Upload and Map Topics", expanded=True):
                     return topics
                 
                 df['Topics'] = df.apply(augment_topics, axis=1)
-                # CHANGE 2 & 5 END
 
                 st.session_state.df3 = df
                 st.success("✅ Step 3 complete!")
