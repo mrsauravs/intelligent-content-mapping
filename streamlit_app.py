@@ -227,10 +227,9 @@ def get_deployment_type_from_scraping(soup):
         return "Customer Managed"
     return ""
 
-# CHANGE START: Updated function for more robust content scraping
 def extract_main_content(soup):
     """
-    Extracts text from the main content area of a webpage, ignoring common non-content elements.
+    Extracts text from the main content area of a webpage, ignoring common non-content and code elements.
     """
     if not soup: return "Content Not Available"
 
@@ -251,20 +250,24 @@ def extract_main_content(soup):
     for selector in selectors:
         main_content = soup.select_one(selector)
         if main_content:
-            break  # Stop searching once a good candidate is found
+            break
 
-    # If no specific container is found, fall back to the body as a last resort
     if not main_content:
         main_content = soup.body
 
     if main_content:
-        # Decompose (remove) common non-content elements within the selected block
+        # Decompose common non-content elements
         for element in main_content.find_all(['nav', 'header', 'footer', 'aside', 'script', 'style', 'form']):
             element.decompose()
+        
+        # CHANGE START: Decompose code blocks to prevent code-related keywords
+        for element in main_content.find_all(['pre', 'code']):
+            element.decompose()
+        # CHANGE END
+            
         return main_content.get_text(separator=' ', strip=True)
 
     return "Main Content Not Found"
-# CHANGE END
 
 def find_items_in_text(text, items):
     if not isinstance(text, str): return ""
