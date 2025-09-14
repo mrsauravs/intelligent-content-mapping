@@ -175,7 +175,6 @@ def enrich_data_with_ai(dataframe, user_roles, topics, functional_areas, api_key
         prompt = get_mapping_prompt(content, 'Functional Area', functional_areas)
         ai_response = call_ai_provider(prompt, api_key, provider, hf_model_id)
         
-        # Enforce a single, unique value for Functional Area
         if ',' in ai_response:
             ai_response = ai_response.split(',')[0].strip()
         
@@ -228,14 +227,44 @@ def get_deployment_type_from_scraping(soup):
         return "Customer Managed"
     return ""
 
+# CHANGE START: Updated function for more robust content scraping
 def extract_main_content(soup):
+    """
+    Extracts text from the main content area of a webpage, ignoring common non-content elements.
+    """
     if not soup: return "Content Not Available"
-    main_content = soup.find('article') or soup.find('main') or soup.body
+
+    # A prioritized list of CSS selectors to find the main content block
+    selectors = [
+        'article',
+        'main',
+        'div[role="main"]',
+        '#main-content',
+        '#content',
+        '.main-content',
+        '.content',
+        '#main',
+        '.main'
+    ]
+
+    main_content = None
+    for selector in selectors:
+        main_content = soup.select_one(selector)
+        if main_content:
+            break  # Stop searching once a good candidate is found
+
+    # If no specific container is found, fall back to the body as a last resort
+    if not main_content:
+        main_content = soup.body
+
     if main_content:
-        for element in main_content.find_all(['nav', 'header', 'footer', 'aside', 'script', 'style']):
+        # Decompose (remove) common non-content elements within the selected block
+        for element in main_content.find_all(['nav', 'header', 'footer', 'aside', 'script', 'style', 'form']):
             element.decompose()
         return main_content.get_text(separator=' ', strip=True)
+
     return "Main Content Not Found"
+# CHANGE END
 
 def find_items_in_text(text, items):
     if not isinstance(text, str): return ""
