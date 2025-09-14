@@ -29,14 +29,27 @@ def get_deployment_type_prompt(content):
     **Your Response (choose one from the list)**:
     """
 
-def get_mapping_prompt(content, column_name, options_list):
+# CHANGE 1, 2, 5 START: Updated mapping prompt to handle new business logic
+def get_mapping_prompt(content, column_name, options_list, url=None):
     """Creates a focused prompt for mapping content to a list of options."""
+    
+    additional_instructions = ""
+    if column_name == 'User Role':
+        additional_instructions = """- If your analysis suggests both "Steward" and "Composer" are relevant, you MUST also include "Server Admin" and "Catalog Admin" in your response."""
+    elif column_name == 'Topics':
+        auth_instruction = """- If the content discusses user authentication (e.g., SAML, SSO, SCIM, LDAP, login procedures), you MUST include "User Accounts" as one of the topics."""
+        url_instruction = ""
+        if url and "installconfig/Update/" in url:
+            url_instruction = """\n- The URL for this page contains 'installconfig/Update/'. Therefore, you MUST include "Customer Managed Server Update" as one of the topics in your response."""
+        additional_instructions = auth_instruction + url_instruction
+
     return f"""
     Analyze the following 'Page Content'. Your task is to select the most relevant term(s) from the provided 'Options List' that accurately describe the content.
 
     **Instructions**:
     - If the column is 'Functional Area', select only the single best option.
     - For other columns, you can select multiple options if they are all relevant.
+    {additional_instructions}
     - Your response MUST ONLY contain terms from the 'Options List'.
     - Separate multiple terms with a comma.
     - If no terms from the list are relevant, respond with an empty string.
@@ -52,11 +65,22 @@ def get_mapping_prompt(content, column_name, options_list):
 
     **Your Response**:
     """
+# CHANGE 1, 2, 5 END
 
-def get_keywords_prompt(content):
+# CHANGE 3 & 4 START: Updated keywords prompt for deduplication and lean content
+def get_keywords_prompt(content, existing_roles="", is_lean_content=False):
     """Creates a focused prompt for generating keywords."""
+    
+    keyword_count_instruction = "generate a list of exactly 20 comma-separated, unique technical keywords"
+    if is_lean_content:
+        keyword_count_instruction = "generate a list of 5 or less comma-separated, unique technical keywords"
+
+    roles_to_exclude_instruction = ""
+    if existing_roles:
+        roles_to_exclude_instruction = f"""- **Critical Exclusion**: Do not include any of the following terms in your keyword list, as they are already categorized as user roles: {existing_roles}."""
+
     return f"""
-    Perform a deep analysis of the following 'Page Content'. Your task is to generate a list of exactly 20 comma-separated, unique technical keywords that are central to the document.
+    Perform a deep analysis of the following 'Page Content'. Your task is to {keyword_count_instruction} that are central to the document.
 
     **Critical Formatting Rule**:
     - Your response MUST ONLY be the comma-separated list of keywords. Do not add labels or explanations.
@@ -67,6 +91,7 @@ def get_keywords_prompt(content):
     - UI References: "toggle", "button", "click", "Preview", "Import", "Run".
     - Placeholders: "table name", "S3 bucket name", "SQL template".
     - SQL Keywords or Release Status Terms.
+    {roles_to_exclude_instruction}
 
     **Page Content**:
     ---
@@ -75,6 +100,7 @@ def get_keywords_prompt(content):
 
     **Your Response (comma-separated keywords only)**:
     """
+# CHANGE 3 & 4 END
 
 # --- CENTRALIZED AI API CALLER WITH SANITIZATION ---
 
@@ -90,7 +116,7 @@ def call_ai_provider(prompt, api_key, provider, hf_model_id=None):
         elif provider == "OpenAI (GPT-4)":
             client = OpenAI(api_key=api_key)
             response = client.chat.completions.create(
-                model="gpt-4o",  # Using the updated model name
+                model="gpt-4o",
                 messages=[{"role": "user", "content": prompt}]
             )
             response_text = response.choices[0].message.content
@@ -102,7 +128,6 @@ def call_ai_provider(prompt, api_key, provider, hf_model_id=None):
         st.warning(f"AI API call failed: {e}")
         return ""
 
-    # Sanitize the response to remove all types of quotes and extra whitespace
     sanitized_text = response_text.strip().replace('"', '').replace("'", "")
     return sanitized_text
 
@@ -121,8 +146,9 @@ def enrich_data_with_ai(dataframe, user_roles, topics, functional_areas, api_key
     for index, row in df_to_process.iterrows():
         pb.progress((index + 1) / total_rows, f"Processing row {index + 1}/{total_rows}...")
         content = row['Page Content']
+        url = row['Page URL'] # Get URL for prompts
 
-        # Task 1: Fill Deployment Type if blank (with safety net)
+        # Task 1: Fill Deployment Type if blank
         if pd.isna(row['Deployment Type']) or row['Deployment Type'] == '' or 'Fetch Error' in str(row['Deployment Type']):
             prompt = get_deployment_type_prompt(content)
             ai_response = call_ai_provider(prompt, api_key, provider, hf_model_id)
@@ -131,7 +157,7 @@ def enrich_data_with_ai(dataframe, user_roles, topics, functional_areas, api_key
             if ai_response in valid_deployment_types:
                 df_to_process.loc[index, 'Deployment Type'] = ai_response
             else:
-                df_to_process.loc[index, 'Deployment Type'] = "" # Fallback to blank if invalid
+                df_to_process.loc[index, 'Deployment Type'] = ""
             time.sleep(1)
 
         # Task 2: Fill User Role if blank
@@ -143,7 +169,7 @@ def enrich_data_with_ai(dataframe, user_roles, topics, functional_areas, api_key
 
         # Task 3: Fill Topics if blank
         if pd.isna(row['Topics']) or row['Topics'] == '':
-            prompt = get_mapping_prompt(content, 'Topics', topics)
+            prompt = get_mapping_prompt(content, 'Topics', topics, url=url)
             ai_response = call_ai_provider(prompt, api_key, provider, hf_model_id)
             df_to_process.loc[index, 'Topics'] = ai_response
             time.sleep(1)
@@ -155,9 +181,12 @@ def enrich_data_with_ai(dataframe, user_roles, topics, functional_areas, api_key
         time.sleep(1)
         
         # Task 5: Always generate Keywords
-        prompt = get_keywords_prompt(content)
+        # CHANGE 3 & 4 START: Add logic for lean content and role exclusion
+        current_roles = df_to_process.loc[index, 'User Role']
+        is_lean = len(content.split()) < 150
+        prompt = get_keywords_prompt(content, existing_roles=current_roles, is_lean_content=is_lean)
+        # CHANGE 3 & 4 END
         ai_response = call_ai_provider(prompt, api_key, provider, hf_model_id)
-        # The response is pre-sanitized, so we just wrap it in quotes
         df_to_process.loc[index, 'Keywords'] = f'"{ai_response}"'
         time.sleep(1)
 
@@ -191,7 +220,6 @@ def get_deployment_type_from_scraping(soup):
     if is_on_prem:
         return "Customer Managed"
     
-    # Fallback to original label check if keywords fail
     if soup.find('p', class_='cloud-label') and soup.find('p', class_='on-prem-label'):
         return "Alation Cloud Service, Customer Managed"
     if soup.find('p', class_='cloud-label'):
@@ -220,7 +248,6 @@ st.set_page_config(layout="wide")
 st.title("📄 AI-Powered Content Mapper")
 st.markdown("A five-step tool to scrape, map, and enrich web content using focused AI tasks.")
 
-# Initialize session state 
 if 'df1' not in st.session_state: st.session_state.df1 = pd.DataFrame()
 if 'df2' not in st.session_state: st.session_state.df2 = pd.DataFrame()
 if 'df3' not in st.session_state: st.session_state.df3 = pd.DataFrame()
@@ -263,6 +290,18 @@ with st.expander("Step 2: Upload and Map User Roles", expanded=True):
             if st.session_state.user_roles:
                 df = st.session_state.df1.copy()
                 df['User Role'] = df['Page Content'].apply(lambda txt: find_items_in_text(txt, st.session_state.user_roles))
+                
+                # CHANGE 1 START: Augment User Roles based on Steward/Composer rule
+                def augment_user_roles(roles_str):
+                    if not isinstance(roles_str, str): return ""
+                    roles_list = [r.strip() for r in roles_str.split(',') if r.strip()]
+                    if "Steward" in roles_list and "Composer" in roles_list:
+                        roles_list.extend(["Server Admin", "Catalog Admin"])
+                        return ", ".join(sorted(list(set(roles_list))))
+                    return roles_str
+                df['User Role'] = df['User Role'].apply(augment_user_roles)
+                # CHANGE 1 END
+                
                 st.session_state.df2 = df
                 st.success("✅ Step 2 complete!")
             else: st.warning("⚠️ Roles file is empty.")
@@ -279,6 +318,28 @@ with st.expander("Step 3: Upload and Map Topics", expanded=True):
             if st.session_state.topics:
                 df = st.session_state.df2.copy()
                 df['Topics'] = df['Page Content'].apply(lambda txt: find_items_in_text(txt, st.session_state.topics))
+                
+                # CHANGE 2 & 5 START: Add helper functions for topic augmentation
+                def add_topic(current_topics, new_topic):
+                    if not isinstance(current_topics, str): current_topics = ""
+                    if new_topic in current_topics: return current_topics
+                    return f"{current_topics}, {new_topic}" if current_topics else new_topic
+
+                def augment_topics(row):
+                    topics = row['Topics']
+                    # Rule for URL pattern
+                    if "installconfig/Update/" in row['Page URL']:
+                        topics = add_topic(topics, "Customer Managed Server Update")
+                    # Rule for authentication content
+                    auth_keywords = ['authentication', 'saml', 'sso', 'scim', 'ldap']
+                    content_lower = str(row['Page Content']).lower()
+                    if any(keyword in content_lower for keyword in auth_keywords):
+                        topics = add_topic(topics, "User Accounts")
+                    return topics
+                
+                df['Topics'] = df.apply(augment_topics, axis=1)
+                # CHANGE 2 & 5 END
+
                 st.session_state.df3 = df
                 st.success("✅ Step 3 complete!")
             else: st.warning("⚠️ Topics file is empty.")
