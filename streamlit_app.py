@@ -473,14 +473,39 @@ with st.expander("Step 2: Upload and Map User Roles", expanded=True):
                 df = st.session_state.df1.copy()
                 df['User Role'] = df['Page Content'].apply(lambda txt: find_items_in_text(txt, st.session_state.user_roles))
                 
-                def augment_user_roles(roles_str):
-                    if not isinstance(roles_str, str): return ""
-                    roles_list = [r.strip() for r in roles_str.split(',') if r.strip()]
-                    if "Steward" in roles_list and "Composer" in roles_list:
-                        roles_list.extend(["Server Admin", "Catalog Admin"])
-                        return ", ".join(sorted(list(set(roles_list))))
-                    return roles_str
-                df['User Role'] = df['User Role'].apply(augment_user_roles)
+                # --- NEW HIERARCHICAL LOGIC FOR USER ROLES ---
+                def apply_role_hierarchy(roles_str):
+                    """
+                    Applies a hierarchical logic to user roles. If a role is present,
+                    all roles above it in the hierarchy are also included.
+                    """
+                    HIERARCHY = [
+                        "Viewer", "Explorer", "Steward", "Composer", 
+                        "Source Admin", "Catalog Admin", "Server Admin"
+                    ]
+                    
+                    if not isinstance(roles_str, str) or not roles_str.strip():
+                        return ""
+
+                    detected_roles = {r.strip() for r in roles_str.split(',') if r.strip()}
+                    
+                    min_index = float('inf')
+                    for role in detected_roles:
+                        if role in HIERARCHY:
+                            index = HIERARCHY.index(role)
+                            if index < min_index:
+                                min_index = index
+                    
+                    if min_index == float('inf'):
+                        return ", ".join(sorted(list(detected_roles)))
+
+                    # Combine original roles with all roles from the lowest detected level upwards
+                    final_roles = detected_roles.union(set(HIERARCHY[min_index:]))
+                    
+                    # Sort the final list according to the defined hierarchy for consistency
+                    return ", ".join(sorted(list(final_roles), key=lambda x: HIERARCHY.index(x) if x in HIERARCHY else float('inf')))
+
+                df['User Role'] = df['User Role'].apply(apply_role_hierarchy)
                 
                 st.session_state.df2 = df
                 st.success("✅ Step 2 complete!")
