@@ -606,7 +606,9 @@ with st.expander("Step 5: Enrich Data with AI", expanded=True):
             st.session_state.df_refined = pd.DataFrame() # Reset refined df
 
     if not st.session_state.df_final.empty:
-        csv_data_step5 = st.session_state.df_final.to_csv(index=False).encode('utf-8-sig')
+        final_columns = ['Page Title', 'Page URL', 'Deployment Type', 'User Role', 'Functional Area', 'Topics', 'Keywords']
+        display_columns = [col for col in final_columns if col in st.session_state.df_final.columns]
+        csv_data_step5 = st.session_state.df_final[display_columns].to_csv(index=False).encode('utf-8-sig')
         st.download_button("📥 Download Enriched Report (from Step 5)", csv_data_step5, "enriched_report_step5.csv", "text/csv")
 
 # Step 6: Uniqueness Analysis
@@ -614,7 +616,6 @@ with st.expander("Step 6: Uniqueness Analysis and Refinement", expanded=True):
     is_disabled = st.session_state.df_final.empty
     if is_disabled: st.info("Complete Step 5 to enable this step.")
 
-    # Re-use the API credentials from Step 5
     ai_provider_step6 = st.selectbox("Choose AI Provider", ["Google Gemini", "OpenAI (GPT-4)", "Hugging Face"], disabled=is_disabled, key="step6_provider")
     api_key_label_step6 = "API Key" if ai_provider_step6 != "Hugging Face" else "Hugging Face User Access Token"
     api_key_step6 = st.text_input(f"Enter your {api_key_label_step6}", type="password", disabled=is_disabled, key="step6_apikey")
@@ -632,7 +633,9 @@ with st.expander("Step 6: Uniqueness Analysis and Refinement", expanded=True):
                 st.success(f"✅ {message}")
     
     if not st.session_state.df_refined.empty:
-        csv_data_step6 = st.session_state.df_refined.to_csv(index=False).encode('utf-8-sig')
+        final_columns = ['Page Title', 'Page URL', 'Deployment Type', 'User Role', 'Functional Area', 'Topics', 'Keywords', 'Uniqueness Score']
+        display_columns = [col for col in final_columns if col in st.session_state.df_refined.columns]
+        csv_data_step6 = st.session_state.df_refined[display_columns].to_csv(index=False).encode('utf-8-sig')
         st.download_button("📥 Download Refined Report (from Step 6)", csv_data_step6, "refined_report_step6.csv", "text/csv")
 
 
