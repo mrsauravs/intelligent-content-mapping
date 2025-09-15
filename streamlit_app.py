@@ -301,8 +301,11 @@ def analyze_and_refine_uniqueness(dataframe, api_key, provider, hf_model_id=None
     st.warning(f"Found {len(ambiguous_keywords)} ambiguous keywords. Attempting to refine...")
 
     # AI-powered disambiguation
+    total_ambiguous = len(ambiguous_keywords)
+    pb_disambiguation = st.progress(0, f"Disambiguating {total_ambiguous} keywords...")
     refined_keywords_map = {} # {page_title: [new_keywords]}
-    for kw, titles in ambiguous_keywords.items():
+    for i, (kw, titles) in enumerate(ambiguous_keywords.items()):
+        pb_disambiguation.progress((i + 1) / total_ambiguous, f"Refining '{kw}' ({i+1}/{total_ambiguous})...")
         prompt = get_disambiguation_prompt(kw, titles)
         response = call_ai_provider(prompt, api_key, provider, hf_model_id)
         time.sleep(1)
@@ -318,7 +321,6 @@ def analyze_and_refine_uniqueness(dataframe, api_key, provider, hf_model_id=None
         if row['Page Title'] in refined_keywords_map:
             current_keywords = [k.strip() for k in row['Keywords'].split(',') if k.strip()]
             new_suggestions = refined_keywords_map[row['Page Title']]
-            # Remove ambiguous terms and add new, more specific ones
             ambiguous_for_this_page = [kw for kw in current_keywords if kw in ambiguous_keywords]
             updated_keywords = [kw for kw in current_keywords if kw not in ambiguous_for_this_page]
             updated_keywords.extend(new_suggestions)
@@ -326,7 +328,10 @@ def analyze_and_refine_uniqueness(dataframe, api_key, provider, hf_model_id=None
             
     # Recalculate uniqueness score
     keyword_to_pages_final = defaultdict(list)
+    total_rows = len(df)
+    pb_score = st.progress(0, f"Calculating final uniqueness scores for {total_rows} rows...")
     for index, row in df.iterrows():
+        pb_score.progress((index + 1) / total_rows)
         keywords = [k.strip() for k in row['Keywords'].split(',') if k.strip()]
         for kw in keywords:
             keyword_to_pages_final[kw].append(row['Page Title'])
