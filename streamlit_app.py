@@ -80,11 +80,15 @@ def get_mapping_prompt(content, column_name, options_list, url=None):
     **Your Response**:
     """
 
-def get_holistic_keywords_prompt(title, prose, titles):
-    """Creates a single, comprehensive prompt for high-quality keyword generation."""
+def get_holistic_keywords_prompt(title, prose, titles, is_lean=False):
+    """Creates a single, comprehensive prompt for high-quality keyword generation, adapting to content depth."""
     titles_str = ", ".join(titles)
+    
+    # Adapt the prompt based on whether the content is lean or rich
+    keyword_count_instruction = "a definitive list of 10-20" if not is_lean else "a concise list of up to 7"
+
     return f"""
-    Act as a senior technical architect and SEO specialist. Your task is to generate a definitive list of 10-20 highly relevant, technical keywords for a documentation page to ensure it is discoverable by the right audience.
+    Act as a senior technical architect and SEO specialist. Your task is to generate {keyword_count_instruction} highly relevant, technical keywords for a documentation page to ensure it is discoverable by the right audience.
 
     First, analyze the provided Page Title, Section Titles, and Prose Content to understand the page's core topic. Then, leveraging your deep knowledge of enterprise software, cloud technologies, and data management, generate a list of specific, technical keywords.
 
@@ -198,12 +202,13 @@ def enrich_data_with_ai(dataframe, user_roles, topics, functional_areas, api_key
         df_to_process.loc[index, 'Functional Area'] = ai_response.split(',')[0].strip() if ',' in ai_response else ai_response
         time.sleep(1)
 
-        # New holistic keyword generation
+        # New holistic keyword generation with adaptation for lean content
         page_title = row['Page Title']
         prose_content = row['Page Content']
         section_titles = row['Section Titles'].split(',') if pd.notna(row['Section Titles']) else []
+        is_lean_content = len(prose_content.split()) < 150
         
-        prompt = get_holistic_keywords_prompt(page_title, prose_content, section_titles)
+        prompt = get_holistic_keywords_prompt(page_title, prose_content, section_titles, is_lean=is_lean_content)
         ai_keywords = call_ai_provider(prompt, api_key, provider, hf_model_id)
         all_keywords = [k.strip() for k in ai_keywords.split(',') if k.strip()]
         
@@ -236,16 +241,16 @@ def clean_and_filter_keywords(keywords_list, current_row, dataframe):
             seen_keywords_normalized.add(normalized_keyword)
     
     # 2. Robust subset filter
-    sorted_by_len = sorted(unique_keywords_cased, key=len)
+    sorted_by_len_desc = sorted(unique_keywords_cased, key=len, reverse=True)
     subset_filtered_keywords = []
-    for i, shorter_kw in enumerate(sorted_by_len):
-        is_subset = False
-        for longer_kw in sorted_by_len[i+1:]:
-            if re.search(r'\b' + re.escape(shorter_kw) + r'\b', longer_kw, re.IGNORECASE):
-                is_subset = True
+    for longer_kw in sorted_by_len_desc:
+        is_subset_of_existing = False
+        for existing_kw in subset_filtered_keywords:
+            if re.search(r'\b' + re.escape(longer_kw) + r'\b', existing_kw, re.IGNORECASE):
+                is_subset_of_existing = True
                 break
-        if not is_subset:
-            subset_filtered_keywords.append(shorter_kw)
+        if not is_subset_of_existing:
+            subset_filtered_keywords.append(longer_kw)
 
     # 3. Final programmatic filtering for unwanted patterns
     vague_identifier_pattern = re.compile(r'^[a-zA-Z]+-\d+$')
