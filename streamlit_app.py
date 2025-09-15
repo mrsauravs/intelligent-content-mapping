@@ -189,15 +189,16 @@ def enrich_data_with_ai(dataframe, user_roles, topics, functional_areas, api_key
             
         if pd.isna(row['User Role']) or row['User Role'] == '':
             prompt = get_mapping_prompt(content, 'User Role', user_roles)
-            # 1. Get the AI's best guess for the role.
             ai_suggested_roles = call_ai_provider(prompt, api_key, provider, hf_model_id)
-            # 2. Apply the same hierarchy logic to the AI's output for consistency.
             df_to_process.loc[index, 'User Role'] = apply_role_hierarchy(ai_suggested_roles)
             time.sleep(1)
 
         if pd.isna(row['Topics']) or row['Topics'] == '':
             prompt = get_mapping_prompt(content, 'Topics', topics, url=url)
-            df_to_process.loc[index, 'Topics'] = call_ai_provider(prompt, api_key, provider, hf_model_id)
+            ai_suggested_topics = call_ai_provider(prompt, api_key, provider, hf_model_id)
+            temp_row_for_topics = row.copy()
+            temp_row_for_topics['Topics'] = ai_suggested_topics
+            df_to_process.loc[index, 'Topics'] = augment_topics(temp_row_for_topics)
             time.sleep(1)
 
         # Only run AI for Functional Area if it's not already set by our programmatic rule
@@ -353,7 +354,7 @@ def calculate_uniqueness(row, keyword_map):
     unique_count = sum(1 for kw in keywords if len(keyword_map[kw]) == 1)
     return (unique_count / len(keywords)) * 100
 
-# --- UTILITY AND SCRAPING FUNCTIONS ---
+# --- UTILITY AND HELPER FUNCTIONS ---
 
 @st.cache_data
 def analyze_page_content(url):
@@ -453,6 +454,38 @@ def apply_role_hierarchy(roles_str):
     # Sort the final list according to the defined hierarchy for consistency
     return ", ".join(sorted(list(final_roles), key=lambda x: HIERARCHY.index(x) if x in HIERARCHY else float('inf')))
 
+def add_topic(current_topics, new_topic):
+    if not isinstance(current_topics, str): current_topics = ""
+    topics_set = set([t.strip() for t in current_topics.split(',') if t.strip()])
+    if isinstance(new_topic, list):
+        topics_set.update(new_topic)
+    else:
+        topics_set.add(new_topic)
+    return ", ".join(sorted(list(topics_set)))
+
+def augment_topics(row):
+    topics = row['Topics']
+    # New FDE-specific Topic Augmentation
+    connector_topics = [
+        "Data Source Access", "Connector Setup", "Connector Authentication", 
+        "Metadata Extraction", "Query Log Ingestion", "Profiling and Sampling", 
+        "Compose Configuration", "Lineage Configuration"
+    ]
+    
+    if "installconfig/Update/" in row['Page URL']:
+        topics = add_topic(topics, "Customer Managed Server Update")
+    # Content-aware FDE Topic Mapping
+    if "/fde/" in row['Page URL'].lower():
+        found_connector_topics = find_items_in_text(row['Page Content'], connector_topics)
+        if found_connector_topics:
+            topics = add_topic(topics, [t.strip() for t in found_connector_topics.split(',')])
+
+    auth_keywords = ['authentication', 'saml', 'sso', 'scim', 'ldap']
+    content_lower = str(row['Page Content']).lower()
+    if any(keyword in content_lower for keyword in auth_keywords):
+        topics = add_topic(topics, "User Accounts")
+    return topics
+    
 # --- STREAMLIT UI ---
 
 st.set_page_config(layout="wide")
@@ -522,40 +555,9 @@ with st.expander("Step 3: Upload and Map Topics", expanded=True):
             st.session_state.topics = [line.strip() for line in io.StringIO(topics_file.getvalue().decode("utf-8")) if line.strip()]
             if st.session_state.topics:
                 df = st.session_state.df2.copy()
-                df['Topics'] = df['Page Content'].apply(lambda txt: find_items_in_text(txt, st.session_state.topics))
-                
-                # New FDE-specific Topic Augmentation
-                connector_topics = [
-                    "Data Source Access", "Connector Setup", "Connector Authentication", 
-                    "Metadata Extraction", "Query Log Ingestion", "Profiling and Sampling", 
-                    "Compose Configuration", "Lineage Configuration"
-                ]
-
-                def add_topic(current_topics, new_topic):
-                    if not isinstance(current_topics, str): current_topics = ""
-                    topics_set = set([t.strip() for t in current_topics.split(',') if t.strip()])
-                    if isinstance(new_topic, list):
-                        topics_set.update(new_topic)
-                    else:
-                        topics_set.add(new_topic)
-                    return ", ".join(sorted(list(topics_set)))
-
-                def augment_topics(row):
-                    topics = row['Topics']
-                    if "installconfig/Update/" in row['Page URL']:
-                        topics = add_topic(topics, "Customer Managed Server Update")
-                    # Content-aware FDE Topic Mapping
-                    if "/fde/" in row['Page URL'].lower():
-                        found_connector_topics = find_items_in_text(row['Page Content'], connector_topics)
-                        if found_connector_topics:
-                           topics = add_topic(topics, [t.strip() for t in found_connector_topics.split(',')])
-
-                    auth_keywords = ['authentication', 'saml', 'sso', 'scim', 'ldap']
-                    content_lower = str(row['Page Content']).lower()
-                    if any(keyword in content_lower for keyword in auth_keywords):
-                        topics = add_topic(topics, "User Accounts")
-                    return topics
-                
+                # Initial mapping from page content
+                df['Topics'] = df.apply(lambda row: find_items_in_text(row['Page Content'], st.session_state.topics), axis=1)
+                # Apply the advanced augmentation logic
                 df['Topics'] = df.apply(augment_topics, axis=1)
 
                 st.session_state.df3 = df
@@ -574,7 +576,7 @@ with st.expander("Step 4: Upload and Map Functional Areas", expanded=True):
             if st.session_state.functional_areas:
                 df = st.session_state.df3.copy()
                 
-                # Use the new, more robust function for mapping
+                # Use the robust function for mapping
                 df['Functional Area'] = df.apply(
                     map_functional_area_from_url, 
                     functional_areas=st.session_state.functional_areas, 
