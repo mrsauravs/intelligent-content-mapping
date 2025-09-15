@@ -84,28 +84,31 @@ def get_holistic_keywords_prompt(title, prose, titles):
     """Creates a single, comprehensive prompt for high-quality keyword generation."""
     titles_str = ", ".join(titles)
     return f"""
-    Act as a senior technical content analyst. Your task is to generate a comprehensive list of up to 20 highly relevant, technical keywords for a documentation page. Analyze the provided Page Title, Section Titles, and Prose Content to understand the core topic, then use your knowledge base to suggest keywords that a user would search for to find this content.
+    Act as a senior technical architect and SEO specialist. Your task is to generate a definitive list of 10-20 highly relevant, technical keywords for a documentation page to ensure it is discoverable by the right audience.
 
-    **Page Title**: {title}
-    **Section Titles**: {titles_str}
-    **Prose Content**:
-    ---
-    {prose[:3000]}
-    ---
+    First, analyze the provided Page Title, Section Titles, and Prose Content to understand the page's core topic. Then, leveraging your deep knowledge of enterprise software, cloud technologies, and data management, generate a list of specific, technical keywords.
 
-    **Critical Rules for Keyword Generation**:
-    1.  **Relevance over Quantity**: Generate between 10 and 20 keywords. The final list must be highly relevant.
-    2.  **Specificity is Key**: Prefer specific, multi-word phrases over single, generic words (e.g., "SAML Configuration" is better than "Configuration").
-    3.  **Use Your Knowledge**: Include important related concepts that a user might search for, even if they are not explicitly mentioned in the text.
+    **Context**:
+    - **Page Title**: {title}
+    - **Section Titles**: {titles_str}
+    - **Prose Content**:
+      ---
+      {prose[:3000]}
+      ---
+
+    **Keyword Generation Instructions**:
+    1.  **Core Concepts**: Include the main technologies and features explicitly mentioned.
+    2.  **Knowledge-Based Expansion**: Include essential related technologies, protocols, or standards that an expert on this topic would expect to find (e.g., for a page on 'SAML', you might include 'IdP', 'SP', 'Assertion'). This is critical.
+    3.  **Specificity is Key**: Prefer specific, multi-word phrases over single, generic words (e.g., "SAML Configuration" is better than "Configuration").
     4.  **Strict Exclusion List**: You MUST NOT include any of the following:
         - Common English words (e.g., 'the', 'is', 'for', 'does').
         - Vague internal identifiers (e.g., 'pg-1', 'server-01').
-        - Example hostnames (e.g., mycatalog.alation-test.com).
+        - Example hostnames or placeholders (e.g., mycatalog.alation-test.com).
         - Overly generic terms (e.g., "Version", "Memory", "Database").
         - Standalone command-line utilities or flags (e.g., `sudo`, `rpm`, `-h`).
-        - File paths or generic filenames.
+        - File paths or generic script names.
 
-    **Your Response (comma-separated list of keywords)**:
+    **Your Response (a single, comma-separated list of keywords)**:
     """
 
 def get_disambiguation_prompt(ambiguous_keyword, page_titles):
