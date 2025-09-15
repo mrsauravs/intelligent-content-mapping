@@ -204,7 +204,7 @@ def enrich_data_with_ai(dataframe, user_roles, topics, functional_areas, api_key
         if pd.isna(row['Functional Area']) or row['Functional Area'] == '':
             prompt = get_mapping_prompt(content, 'Functional Area', functional_areas)
             ai_response = call_ai_provider(prompt, api_key, provider, hf_model_id)
-            df_to_process.loc[index, 'Functional Area'] = ai_response # MODIFIED: Accept multiple functional areas
+            df_to_process.loc[index, 'Functional Area'] = ai_response
             time.sleep(1)
 
         # New holistic keyword generation with adaptation for lean content
@@ -403,24 +403,28 @@ def find_items_in_text(text, items):
 
 def map_functional_area_from_url(row, functional_areas):
     """
-    Maps the functional area by parsing the URL against a list of known areas.
+    Maps all relevant functional areas by parsing the URL.
     """
+    found_areas = [] # MODIFIED: Initialize a list to hold all matches.
+
     # Preserve the specific FDE rule first for precedence
     if "/fde/" in row['Page URL'].lower():
-        return "Forward Deployed Engineering"
+        # MODIFIED: Add to the list instead of returning immediately.
+        found_areas.append("Forward Deployed Engineering")
     
-    # Create URL-friendly versions of functional areas to check against the URL
-    # Example: "Open Connector Framework" -> "OpenConnectorFramework"
+    # Create URL-friendly versions of functional areas
     url_segment_map = {
         re.sub(r'\s+', '', area): area for area in functional_areas
     }
     
-    # Find the first matching functional area in the URL
+    # Find all matching functional areas in the URL
     for segment, area_name in url_segment_map.items():
         if segment in row['Page URL']:
-            return area_name
+            # MODIFIED: Add every match found to the list.
+            found_areas.append(area_name)
             
-    return "" # Return empty if no match, so AI can fill it later
+    # MODIFIED: Return a unique, sorted, comma-separated string of all found areas.
+    return ", ".join(sorted(list(set(found_areas))))
 
 def apply_role_hierarchy(roles_str):
     """
