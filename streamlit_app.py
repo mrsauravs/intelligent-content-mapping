@@ -398,6 +398,27 @@ def find_items_in_text(text, items):
     found_items = sorted([item for item in items if re.search(r'\b' + re.escape(item) + r'\b', text, re.IGNORECASE)])
     return ", ".join(found_items)
 
+def map_functional_area_from_url(row, functional_areas):
+    """
+    Maps the functional area by parsing the URL against a list of known areas.
+    """
+    # Preserve the specific FDE rule first for precedence
+    if "/fde/" in row['Page URL'].lower():
+        return "Forward Deployed Engineering"
+    
+    # Create URL-friendly versions of functional areas to check against the URL
+    # Example: "Open Connector Framework" -> "OpenConnectorFramework"
+    url_segment_map = {
+        re.sub(r'\s+', '', area): area for area in functional_areas
+    }
+    
+    # Find the first matching functional area in the URL
+    for segment, area_name in url_segment_map.items():
+        if segment in row['Page URL']:
+            return area_name
+            
+    return "" # Return empty if no match, so AI can fill it later
+
 # --- STREAMLIT UI ---
 
 st.set_page_config(layout="wide")
@@ -527,16 +548,16 @@ with st.expander("Step 4: Upload and Map Functional Areas", expanded=True):
             st.session_state.functional_areas = [line.strip() for line in io.StringIO(areas_file.getvalue().decode("utf-8")) if line.strip()]
             if st.session_state.functional_areas:
                 df = st.session_state.df3.copy()
-                df['Functional Area'] = '' # Ensure column exists
-
-                def map_fde_functional_area(row):
-                    if "/fde/" in row['Page URL'].lower():
-                        return "Forward Deployed Engineering"
-                    return ""
                 
-                df['Functional Area'] = df.apply(map_fde_functional_area, axis=1)
+                # Use the new, more robust function for mapping
+                df['Functional Area'] = df.apply(
+                    map_functional_area_from_url, 
+                    functional_areas=st.session_state.functional_areas, 
+                    axis=1
+                )
+                
                 st.session_state.df_final_pre_ai = df # Save pre-AI mapping
-                st.success("✅ Step 4 complete! FDE rule applied. Ready for AI enrichment.")
+                st.success("✅ Step 4 complete! Functional Area rule applied. Ready for AI enrichment.")
             else: st.warning("⚠️ Functional areas file is empty.")
         else: st.warning("⚠️ Please upload a functional areas file.")
 
