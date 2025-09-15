@@ -61,8 +61,7 @@ def get_mapping_prompt(content, column_name, options_list, url=None):
     Analyze the following 'Page Content'. Your task is to select the most relevant term(s) from the provided 'Options List' that accurately describe the content.
 
     **Instructions**:
-    - If the column is 'Functional Area', select only the single best option.
-    - For other columns, you can select multiple options if they are all relevant.
+    - You can select multiple options if they are all relevant.
     {additional_instructions}
     - Your response MUST ONLY contain terms from the 'Options List'.
     - Separate multiple terms with a comma.
@@ -205,7 +204,7 @@ def enrich_data_with_ai(dataframe, user_roles, topics, functional_areas, api_key
         if pd.isna(row['Functional Area']) or row['Functional Area'] == '':
             prompt = get_mapping_prompt(content, 'Functional Area', functional_areas)
             ai_response = call_ai_provider(prompt, api_key, provider, hf_model_id)
-            df_to_process.loc[index, 'Functional Area'] = ai_response.split(',')[0].strip() if ',' in ai_response else ai_response
+            df_to_process.loc[index, 'Functional Area'] = ai_response # MODIFIED: Accept multiple functional areas
             time.sleep(1)
 
         # New holistic keyword generation with adaptation for lean content
@@ -522,7 +521,7 @@ with st.expander("Step 1: Scrape URLs and Content", expanded=True):
                     data.update({'Page Content': 'Fetch Error', 'Section Titles': '', 'Code Content': ''})
                 results.append(data)
             st.session_state.df1 = pd.DataFrame(results)
-            st.session_state.df2, st.session_state.df3, st.session_state.df_final, st.session_state.df_refined, st.session_state.df_final_pre_ai = pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+            st.session_state.df2, st.session_state.df3, st.session_state.df_final, st.session_state.df_refined, st.session_state.df_final_pre_ai = pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
             st.session_state.user_roles, st.session_state.topics, st.session_state.functional_areas = None, None, None
             st.success("✅ Step 1 complete!")
         else:
