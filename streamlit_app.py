@@ -80,92 +80,32 @@ def get_mapping_prompt(content, column_name, options_list, url=None):
     **Your Response**:
     """
 
-def get_prose_keywords_prompt(content):
-    """Creates a refined prompt for extracting keywords from prose."""
+def get_holistic_keywords_prompt(title, prose, titles):
+    """Creates a single, comprehensive prompt for high-quality keyword generation."""
+    titles_str = ", ".join(titles)
     return f"""
-    Analyze the following prose from a technical document. Your task is to extract up to 5 specific, technical nouns or noun phrases representing features, components, or technologies.
+    Act as a senior technical content analyst. Your task is to generate a comprehensive list of up to 20 highly relevant, technical keywords for a documentation page. Analyze the provided Page Title, Section Titles, and Prose Content to understand the core topic, then use your knowledge base to suggest keywords that a user would search for to find this content.
 
-    **Critical Rules**:
-    - Your response MUST ONLY be a comma-separated list.
-    - Keywords should ideally be 1-3 words long. Avoid long descriptive phrases.
-    - Prefer the full, specific names of technologies or frameworks (e.g., "Open Connector Framework" is better than "Open Connector").
-    - Avoid generic acronyms (e.g., "DB") if a more specific term (e.g., "MongoDB") is available.
-    - Do not include common English stop words (e.g., 'the', 'is', 'for', 'does').
-    - Do not include vague internal identifiers (e.g., 'pg-1', 'server-01'), example hostnames (e.g., mycatalog.alation-test.com), or overly generic terms ("Version", "Memory", "Alation").
-
+    **Page Title**: {title}
+    **Section Titles**: {titles_str}
     **Prose Content**:
     ---
-    {content[:3000]}
+    {prose[:3000]}
     ---
 
-    **Your Response (up to 5 keywords)**:
-    """
+    **Critical Rules for Keyword Generation**:
+    1.  **Relevance over Quantity**: Generate between 10 and 20 keywords. The final list must be highly relevant.
+    2.  **Specificity is Key**: Prefer specific, multi-word phrases over single, generic words (e.g., "SAML Configuration" is better than "Configuration").
+    3.  **Use Your Knowledge**: Include important related concepts that a user might search for, even if they are not explicitly mentioned in the text.
+    4.  **Strict Exclusion List**: You MUST NOT include any of the following:
+        - Common English words (e.g., 'the', 'is', 'for', 'does').
+        - Vague internal identifiers (e.g., 'pg-1', 'server-01').
+        - Example hostnames (e.g., mycatalog.alation-test.com).
+        - Overly generic terms (e.g., "Version", "Memory", "Database").
+        - Standalone command-line utilities or flags (e.g., `sudo`, `rpm`, `-h`).
+        - File paths or generic filenames.
 
-def get_titles_keywords_prompt(titles_list):
-    """Creates a refined prompt for extracting keywords from section titles."""
-    titles_str = ", ".join(titles_list)
-    return f"""
-    Analyze the following list of section titles. Your task is to extract up to 5 specific, technical nouns or noun phrases representing features, components, or technologies.
-
-    **Critical Rules**:
-    - Your response MUST ONLY be a comma-separated list.
-    - Keywords should ideally be 1-3 words long. Avoid long descriptive phrases.
-    - Prefer the full, specific names of technologies or frameworks (e.g., "Open Connector Framework" is better than "Open Connector").
-    - Avoid generic acronyms (e.g., "DB") if a more specific term (e.g., "MongoDB") is available.
-    - Do not include common English stop words (e.g., 'the', 'is', 'for', 'does').
-    - Do not include vague internal identifiers (e.g., 'pg-1', 'server-01') or overly generic terms ("Version", "Memory", "Alation").
-
-    **Section Titles**:
-    ---
-    {titles_str}
-    ---
-
-    **Your Response (up to 5 keywords)**:
-    """
-
-def get_code_keywords_prompt(code_content):
-    """Creates a refined prompt for extracting keywords from code blocks."""
-    return f"""
-    Analyze the following code snippets. Your task is to extract up to 5 of the most relevant technical keywords. Keywords should represent technologies or concepts.
-
-    **Critical Rules**:
-    - Your response MUST ONLY be a comma-separated list.
-    - Keywords should ideally be 1-3 words long.
-    - You MUST exclude all file paths (e.g., /opt/alation/) and specific script names (e.g., reset_checkpoint.py).
-    - Avoid generic command-line utilities like `sudo` or `rpm`, and standalone flags like `-h` or `-i`.
-
-    **Code Content**:
-    ---
-    {code_content[:3000]}
-    ---
-
-    **Your Response (up to 5 keywords)**:
-    """
-
-def get_seo_keywords_prompt(existing_keywords, page_title):
-    """Creates a prompt for generating SEO-relevant keywords based on existing context."""
-    existing_keywords_str = ", ".join(existing_keywords)
-    return f"""
-    Analyze the following page title and list of existing technical keywords. Your task is to act as an SEO expert and suggest up to 5 additional, related technical keywords or concepts that a user might search for to find this content, even if they are not in the text.
-
-    **Critical Rules**:
-    - Your response MUST ONLY be a comma-separated list.
-    - The suggested keywords should be technically relevant and complementary to the existing keywords.
-    - Do not repeat any keywords already present in the "Existing Keywords" list.
-    - Keywords should ideally be 1-3 words long.
-    - Do not suggest generic terms, stop words, or file paths.
-
-    **Page Title**:
-    ---
-    {page_title}
-    ---
-
-    **Existing Keywords (for context)**:
-    ---
-    {existing_keywords_str}
-    ---
-
-    **Your Response (up to 5 additional SEO keywords)**:
+    **Your Response (comma-separated list of keywords)**:
     """
 
 def get_disambiguation_prompt(ambiguous_keyword, page_titles):
@@ -255,40 +195,21 @@ def enrich_data_with_ai(dataframe, user_roles, topics, functional_areas, api_key
         df_to_process.loc[index, 'Functional Area'] = ai_response.split(',')[0].strip() if ',' in ai_response else ai_response
         time.sleep(1)
 
-        # Structured keyword generation pipeline
-        all_keywords = []
-        # 1. Get keywords from prose
-        if pd.notna(row['Page Content']) and row['Page Content']:
-            prompt = get_prose_keywords_prompt(row['Page Content'])
-            prose_keys = call_ai_provider(prompt, api_key, provider, hf_model_id)
-            all_keywords.extend([k.strip() for k in prose_keys.split(',') if k.strip()])
-            time.sleep(1)
-        # 2. Get keywords from titles
-        if pd.notna(row['Section Titles']) and row['Section Titles']:
-            prompt = get_titles_keywords_prompt(row['Section Titles'].split(','))
-            title_keys = call_ai_provider(prompt, api_key, provider, hf_model_id)
-            all_keywords.extend([k.strip() for k in title_keys.split(',') if k.strip()])
-            time.sleep(1)
-        # 3. Get keywords from code
-        if pd.notna(row['Code Content']) and row['Code Content']:
-            prompt = get_code_keywords_prompt(row['Code Content'])
-            code_keys = call_ai_provider(prompt, api_key, provider, hf_model_id)
-            all_keywords.extend([k.strip() for k in code_keys.split(',') if k.strip()])
-            time.sleep(1)
-        # 4. Get keywords from URL (programmatic)
+        # New holistic keyword generation
+        page_title = row['Page Title']
+        prose_content = row['Page Content']
+        section_titles = row['Section Titles'].split(',') if pd.notna(row['Section Titles']) else []
+        
+        prompt = get_holistic_keywords_prompt(page_title, prose_content, section_titles)
+        ai_keywords = call_ai_provider(prompt, api_key, provider, hf_model_id)
+        all_keywords = [k.strip() for k in ai_keywords.split(',') if k.strip()]
+        
+        # Add keywords from URL programmatically
         url_keys = re.findall(r'(?i)(V\s?R?\d+)\b', url)
         all_keywords.extend(url_keys)
-        
-        # 5. Get SEO keywords from AI's knowledge base
-        if all_keywords:
-            page_title = row['Page Title']
-            prompt = get_seo_keywords_prompt(all_keywords, page_title)
-            seo_keys = call_ai_provider(prompt, api_key, provider, hf_model_id)
-            all_keywords.extend([k.strip() for k in seo_keys.split(',') if k.strip()])
-            time.sleep(1)
 
         # Final Cleaning and Deduplication
-        df_to_process.loc[index, 'Keywords'] = f'"{", ".join(clean_and_filter_keywords(all_keywords, row, df_to_process))}"'
+        df_to_process.loc[index, 'Keywords'] = ", ".join(clean_and_filter_keywords(all_keywords, df_to_process.loc[index], df_to_process))
         
     return df_to_process
 
@@ -358,7 +279,7 @@ def analyze_and_refine_uniqueness(dataframe, api_key, provider, hf_model_id=None
     # Invert the data: map each keyword to a list of page titles
     keyword_to_pages = defaultdict(list)
     for index, row in df.iterrows():
-        keywords = [k.strip() for k in row['Keywords'].replace('"', '').split(',') if k.strip()]
+        keywords = [k.strip() for k in row['Keywords'].split(',') if k.strip()]
         for kw in keywords:
             keyword_to_pages[kw].append(row['Page Title'])
     
@@ -387,18 +308,18 @@ def analyze_and_refine_uniqueness(dataframe, api_key, provider, hf_model_id=None
     # Update the dataframe with refined keywords
     for index, row in df.iterrows():
         if row['Page Title'] in refined_keywords_map:
-            current_keywords = [k.strip() for k in row['Keywords'].replace('"', '').split(',') if k.strip()]
+            current_keywords = [k.strip() for k in row['Keywords'].split(',') if k.strip()]
             new_suggestions = refined_keywords_map[row['Page Title']]
             # Remove ambiguous terms and add new, more specific ones
             ambiguous_for_this_page = [kw for kw in current_keywords if kw in ambiguous_keywords]
             updated_keywords = [kw for kw in current_keywords if kw not in ambiguous_for_this_page]
             updated_keywords.extend(new_suggestions)
-            df.loc[index, 'Keywords'] = f'"{", ".join(list(dict.fromkeys(updated_keywords)))}"'
+            df.loc[index, 'Keywords'] = ", ".join(list(dict.fromkeys(updated_keywords)))
             
     # Recalculate uniqueness score
     keyword_to_pages_final = defaultdict(list)
     for index, row in df.iterrows():
-        keywords = [k.strip() for k in row['Keywords'].replace('"', '').split(',') if k.strip()]
+        keywords = [k.strip() for k in row['Keywords'].split(',') if k.strip()]
         for kw in keywords:
             keyword_to_pages_final[kw].append(row['Page Title'])
     
@@ -408,7 +329,7 @@ def analyze_and_refine_uniqueness(dataframe, api_key, provider, hf_model_id=None
 
 def calculate_uniqueness(row, keyword_map):
     """Calculates the percentage of unique keywords for a given row."""
-    keywords = [k.strip() for k in row['Keywords'].replace('"', '').split(',') if k.strip()]
+    keywords = [k.strip() for k in row['Keywords'].split(',') if k.strip()]
     if not keywords:
         return 0
     unique_count = sum(1 for kw in keywords if len(keyword_map[kw]) == 1)
