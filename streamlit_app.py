@@ -197,10 +197,12 @@ def enrich_data_with_ai(dataframe, user_roles, topics, functional_areas, api_key
             df_to_process.loc[index, 'Topics'] = call_ai_provider(prompt, api_key, provider, hf_model_id)
             time.sleep(1)
 
-        prompt = get_mapping_prompt(content, 'Functional Area', functional_areas)
-        ai_response = call_ai_provider(prompt, api_key, provider, hf_model_id)
-        df_to_process.loc[index, 'Functional Area'] = ai_response.split(',')[0].strip() if ',' in ai_response else ai_response
-        time.sleep(1)
+        # Only run AI for Functional Area if it's not already set by our FDE rule
+        if pd.isna(row['Functional Area']) or row['Functional Area'] == '':
+            prompt = get_mapping_prompt(content, 'Functional Area', functional_areas)
+            ai_response = call_ai_provider(prompt, api_key, provider, hf_model_id)
+            df_to_process.loc[index, 'Functional Area'] = ai_response.split(',')[0].strip() if ',' in ai_response else ai_response
+            time.sleep(1)
 
         # New holistic keyword generation with adaptation for lean content
         page_title = row['Page Title']
@@ -407,6 +409,7 @@ if 'df2' not in st.session_state: st.session_state.df2 = pd.DataFrame()
 if 'df3' not in st.session_state: st.session_state.df3 = pd.DataFrame()
 if 'df_final' not in st.session_state: st.session_state.df_final = pd.DataFrame()
 if 'df_refined' not in st.session_state: st.session_state.df_refined = pd.DataFrame()
+if 'df_final_pre_ai' not in st.session_state: st.session_state.df_final_pre_ai = pd.DataFrame()
 if 'user_roles' not in st.session_state: st.session_state.user_roles = None
 if 'topics' not in st.session_state: st.session_state.topics = None
 if 'functional_areas' not in st.session_state: st.session_state.functional_areas = None
@@ -431,7 +434,7 @@ with st.expander("Step 1: Scrape URLs and Content", expanded=True):
                     data.update({'Page Content': 'Fetch Error', 'Section Titles': '', 'Code Content': ''})
                 results.append(data)
             st.session_state.df1 = pd.DataFrame(results)
-            st.session_state.df2, st.session_state.df3, st.session_state.df_final, st.session_state.df_refined = pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+            st.session_state.df2, st.session_state.df3, st.session_state.df_final, st.session_state.df_refined, st.session_state.df_final_pre_ai = pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
             st.session_state.user_roles, st.session_state.topics, st.session_state.functional_areas = None, None, None
             st.success("✅ Step 1 complete!")
         else:
@@ -475,15 +478,32 @@ with st.expander("Step 3: Upload and Map Topics", expanded=True):
                 df = st.session_state.df2.copy()
                 df['Topics'] = df['Page Content'].apply(lambda txt: find_items_in_text(txt, st.session_state.topics))
                 
+                # New FDE-specific Topic Augmentation
+                connector_topics = [
+                    "Data Source Access", "Connector Setup", "Connector Authentication", 
+                    "Metadata Extraction", "Query Log Ingestion", "Profiling and Sampling", 
+                    "Compose Configuration", "Lineage Configuration"
+                ]
+
                 def add_topic(current_topics, new_topic):
                     if not isinstance(current_topics, str): current_topics = ""
-                    if new_topic in current_topics: return current_topics
-                    return f"{current_topics}, {new_topic}" if current_topics else new_topic
+                    topics_set = set([t.strip() for t in current_topics.split(',') if t.strip()])
+                    if isinstance(new_topic, list):
+                        topics_set.update(new_topic)
+                    else:
+                        topics_set.add(new_topic)
+                    return ", ".join(sorted(list(topics_set)))
 
                 def augment_topics(row):
                     topics = row['Topics']
                     if "installconfig/Update/" in row['Page URL']:
                         topics = add_topic(topics, "Customer Managed Server Update")
+                    # Content-aware FDE Topic Mapping
+                    if "/fde/" in row['Page URL'].lower():
+                        found_connector_topics = find_items_in_text(row['Page Content'], connector_topics)
+                        if found_connector_topics:
+                           topics = add_topic(topics, [t.strip() for t in found_connector_topics.split(',')])
+
                     auth_keywords = ['authentication', 'saml', 'sso', 'scim', 'ldap']
                     content_lower = str(row['Page Content']).lower()
                     if any(keyword in content_lower for keyword in auth_keywords):
@@ -498,21 +518,31 @@ with st.expander("Step 3: Upload and Map Topics", expanded=True):
         else: st.warning("⚠️ Please upload a topics file.")
 
 # Step 4: Functional Areas
-with st.expander("Step 4: Upload Functional Areas", expanded=True):
+with st.expander("Step 4: Upload and Map Functional Areas", expanded=True):
     is_disabled = st.session_state.df3.empty
-    if is_disabled: st.info("Complete Step 4 to proceed.")
+    if is_disabled: st.info("Complete Step 3 to proceed.")
     areas_file = st.file_uploader("Upload Functional Areas File (.txt)", key="step4", disabled=is_disabled)
-    if areas_file is not None and not is_disabled:
-        st.session_state.functional_areas = [line.strip() for line in io.StringIO(areas_file.getvalue().decode("utf-8")) if line.strip()]
-        if st.session_state.functional_areas:
-            st.success(f"✅ Step 4 complete! Loaded {len(st.session_state.functional_areas)} functional areas.")
-        else:
-            st.warning("⚠️ Functional areas file is empty.")
+    if st.button("🗺️ Map Functional Area", disabled=is_disabled):
+        if areas_file:
+            st.session_state.functional_areas = [line.strip() for line in io.StringIO(areas_file.getvalue().decode("utf-8")) if line.strip()]
+            if st.session_state.functional_areas:
+                df = st.session_state.df3.copy()
+                df['Functional Area'] = '' # Ensure column exists
+
+                def map_fde_functional_area(row):
+                    if "/fde/" in row['Page URL'].lower():
+                        return "Forward Deployed Engineering"
+                    return ""
+                
+                df['Functional Area'] = df.apply(map_fde_functional_area, axis=1)
+                st.session_state.df_final_pre_ai = df # Save pre-AI mapping
+                st.success("✅ Step 4 complete! FDE rule applied. Ready for AI enrichment.")
+            else: st.warning("⚠️ Functional areas file is empty.")
+        else: st.warning("⚠️ Please upload a functional areas file.")
 
 # Step 5: AI Enrichment
 with st.expander("Step 5: Enrich Data with AI", expanded=True):
-    all_data_loaded = st.session_state.user_roles and st.session_state.topics and st.session_state.functional_areas
-    is_disabled = st.session_state.df3.empty or not all_data_loaded
+    is_disabled = st.session_state.df_final_pre_ai.empty or not st.session_state.functional_areas
     if is_disabled: st.info("Complete Steps 1-4 to enable AI enrichment.")
 
     ai_provider = st.selectbox("Choose AI Provider", ["Google Gemini", "OpenAI (GPT-4)", "Hugging Face"], disabled=is_disabled)
@@ -528,7 +558,7 @@ with st.expander("Step 5: Enrich Data with AI", expanded=True):
         else:
             with st.spinner("AI is processing... This may take several minutes."):
                 st.session_state.df_final = enrich_data_with_ai(
-                    st.session_state.df3,
+                    st.session_state.df_final_pre_ai, # Use the pre-mapped data
                     st.session_state.user_roles,
                     st.session_state.topics,
                     st.session_state.functional_areas,
