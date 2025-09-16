@@ -345,11 +345,11 @@ with st.sidebar:
 st.title("AI-Powered Content Taxonomy")
 st.markdown("A multi-step tool to scrape, map, enrich, and refine web content taxonomy using focused AI tasks.")
 
-tab1, tab2, tab3 = st.tabs(["Step 1: Ingest & Map", "Step 2: AI Processing", "Step 3: Results Editor"])
+tab1, tab2, tab3 = st.tabs(["Step 1: Ingest & Map", "Step 2: Generate Keywords", "Step 3: Edit & Download Results"])
 
 # --- Tab 1: Ingest & Map Data ---
 with tab1:
-    st.header("1. Scrape URLs and Content")
+    st.header("Scrape URLs and Content")
     urls_file = st.file_uploader("Upload URLs File (.txt)", key="step1")
     if st.button("🚀 Scrape URLs", type="primary"):
         if urls_file:
@@ -374,7 +374,7 @@ with tab1:
             st.warning("⚠️ Please upload a URLs file.")
 
     st.markdown("---")
-    st.header("2. Map User Roles, Topics, and Functional Areas")
+    st.header("Map User Roles, Topics, and Functional Areas")
     col_roles, col_topics, col_areas = st.columns(3)
     with col_roles:
         roles_file = st.file_uploader("Upload User Roles (.txt)", key="step2", disabled=st.session_state.df1.empty)
@@ -409,7 +409,7 @@ with tab1:
 
 # --- Tab 2: AI Processing ---
 with tab2:
-    st.header("Step 5: Enrich Data with AI")
+    st.header("Enrich Data with AI")
     if st.button("🤖 Fill Blanks & Generate Keywords", disabled=st.session_state.df_final_pre_ai.empty):
         if not api_key: st.warning(f"Please enter your {api_key_label} in the sidebar.")
         else:
@@ -426,7 +426,7 @@ with tab2:
         st.download_button("📥 Download Enriched Report (Step 5)", csv_step5, "enriched_report.csv", "text/csv")
 
     st.markdown("---")
-    st.header("Step 6: Uniqueness Analysis & Refinement")
+    st.header("Refine with Uniqueness Analysis")
     if st.button("🔍 Analyze and Refine Uniqueness", disabled=st.session_state.df_final.empty):
         if not api_key: st.warning(f"Please enter your {api_key_label} in the sidebar.")
         else:
