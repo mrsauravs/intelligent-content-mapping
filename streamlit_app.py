@@ -342,8 +342,8 @@ with st.sidebar:
     )
 
 # --- Main App Layout ---
-st.title("📄 AI-Powered Content Mapper")
-st.markdown("A multi-step tool to scrape, map, enrich, and refine web content using focused AI tasks.")
+st.title("AI-Powered Content Taxonomy")
+st.markdown("A multi-step tool to scrape, map, enrich, and refine web content taxonomy using focused AI tasks.")
 
 tab1, tab2, tab3 = st.tabs(["Step 1: Ingest & Map", "Step 2: AI Processing", "Step 3: Results Editor"])
 
@@ -374,7 +374,7 @@ with tab1:
             st.warning("⚠️ Please upload a URLs file.")
 
     st.markdown("---")
-    st.header("2. Map User Roles, Topics, and Areas")
+    st.header("2. Map User Roles, Topics, and Functional Areas")
     col_roles, col_topics, col_areas = st.columns(3)
     with col_roles:
         roles_file = st.file_uploader("Upload User Roles (.txt)", key="step2", disabled=st.session_state.df1.empty)
@@ -398,7 +398,7 @@ with tab1:
             else: st.warning("Upload a topics file.")
     with col_areas:
         areas_file = st.file_uploader("Upload Areas (.txt)", key="step4", disabled=st.session_state.df3.empty)
-        if st.button("🗺️ Map Areas", disabled=st.session_state.df3.empty):
+        if st.button("🗺️ Map Functional Areas", disabled=st.session_state.df3.empty):
             if areas_file:
                 st.session_state.functional_areas = [line.strip() for line in io.StringIO(areas_file.getvalue().decode("utf-8")) if line.strip()]
                 df = st.session_state.df3.copy()
