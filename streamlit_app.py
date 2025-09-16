@@ -5,7 +5,7 @@ from bs4 import BeautifulSoup
 import io
 import re
 import time
-import google.generativeai as genai
+import google.generai as genai
 from openai import OpenAI
 from huggingface_hub import InferenceClient
 from collections import defaultdict
@@ -316,6 +316,8 @@ local_css("style.css")
 
 # Initialize session state variables
 if 'df1' not in st.session_state: st.session_state.df1 = pd.DataFrame()
+if 'df2' not in st.session_state: st.session_state.df2 = pd.DataFrame()
+if 'df3' not in st.session_state: st.session_state.df3 = pd.DataFrame()
 if 'df_final_pre_ai' not in st.session_state: st.session_state.df_final_pre_ai = pd.DataFrame()
 if 'df_final' not in st.session_state: st.session_state.df_final = pd.DataFrame()
 if 'df_refined' not in st.session_state: st.session_state.df_refined = pd.DataFrame()
@@ -347,52 +349,69 @@ tab1, tab2, tab3 = st.tabs(["Step 1: Ingest & Map", "Step 2: AI Processing", "St
 
 # --- Tab 1: Ingest & Map Data ---
 with tab1:
-    st.header("Step 1: Scrape URLs and Content")
+    st.header("1. Scrape URLs and Content")
     urls_file = st.file_uploader("Upload URLs File (.txt)", key="step1")
     if st.button("🚀 Scrape URLs", type="primary"):
         if urls_file:
-            # ... Scrape logic ...
+            urls = [line.strip() for line in io.StringIO(urls_file.getvalue().decode("utf-8")) if line.strip()]
+            results, pb = [], st.progress(0, "Starting...")
+            for i, url in enumerate(urls):
+                pb.progress((i + 1) / len(urls), f"Processing URL {i+1}/{len(urls)}...")
+                soup, title = analyze_page_content(url)
+                data = {'Page Title': title, 'Page URL': url}
+                if soup:
+                    structured_content = extract_structured_content(soup)
+                    data['Page Content'] = structured_content['prose']
+                    data['Section Titles'] = ",".join(structured_content['titles'])
+                else:
+                    data.update({'Page Content': 'Fetch Error', 'Section Titles': ''})
+                results.append(data)
+            st.session_state.df1 = pd.DataFrame(results)
+            # Reset subsequent dataframes
+            st.session_state.df2, st.session_state.df3, st.session_state.df_final_pre_ai, st.session_state.df_final, st.session_state.df_refined = pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
             st.success("✅ Scrape complete!")
         else:
             st.warning("⚠️ Please upload a URLs file.")
 
     st.markdown("---")
-    st.header("Step 2: Map User Roles")
-    roles_file = st.file_uploader("Upload User Roles File (.txt)", key="step2", disabled=st.session_state.df1.empty)
-    if st.button("🗺️ Map User Roles", disabled=st.session_state.df1.empty):
-        if roles_file:
-            # ... Role mapping logic ...
-            st.success("✅ User Roles mapped!")
-        else:
-            st.warning("⚠️ Please upload a roles file.")
-
-    st.markdown("---")
-    st.header("Step 3: Map Topics")
-    topics_file = st.file_uploader("Upload Topics File (.txt)", key="step3", disabled=st.session_state.df1.empty)
-    if st.button("🏷️ Map Topics", disabled=st.session_state.df1.empty):
-        if topics_file:
-            # ... Topics mapping logic ...
-            st.success("✅ Topics mapped!")
-        else:
-            st.warning("⚠️ Please upload a topics file.")
-
-    st.markdown("---")
-    st.header("Step 4: Map Functional Areas")
-    areas_file = st.file_uploader("Upload Functional Areas File (.txt)", key="step4", disabled=st.session_state.df1.empty)
-    if st.button("🗺️ Map Functional Area", disabled=st.session_state.df1.empty):
-        if areas_file:
-            # ... Area mapping logic ...
-            st.success("✅ Functional Areas mapped! Ready for AI processing in the next tab.")
-        else:
-            st.warning("⚠️ Please upload a functional areas file.")
-
+    st.header("2. Map User Roles, Topics, and Areas")
+    col_roles, col_topics, col_areas = st.columns(3)
+    with col_roles:
+        roles_file = st.file_uploader("Upload User Roles (.txt)", key="step2", disabled=st.session_state.df1.empty)
+        if st.button("🗺️ Map Roles", disabled=st.session_state.df1.empty):
+            if roles_file:
+                st.session_state.user_roles = [line.strip() for line in io.StringIO(roles_file.getvalue().decode("utf-8")) if line.strip()]
+                df = st.session_state.df1.copy()
+                df['User Role'] = df['Page Content'].apply(lambda txt: find_items_in_text(txt, st.session_state.user_roles)).apply(apply_role_hierarchy)
+                st.session_state.df2 = df
+                st.success("Roles mapped!")
+            else: st.warning("Upload a roles file.")
+    with col_topics:
+        topics_file = st.file_uploader("Upload Topics (.txt)", key="step3", disabled=st.session_state.df2.empty)
+        if st.button("🏷️ Map Topics", disabled=st.session_state.df2.empty):
+            if topics_file:
+                st.session_state.topics = [line.strip() for line in io.StringIO(topics_file.getvalue().decode("utf-8")) if line.strip()]
+                df = st.session_state.df2.copy()
+                df['Topics'] = df.apply(lambda row: find_items_in_text(row['Page Content'], st.session_state.topics), axis=1).apply(lambda topics: augment_topics({'Topics': topics, 'Page URL': '', 'Page Content': ''}))
+                st.session_state.df3 = df
+                st.success("Topics mapped!")
+            else: st.warning("Upload a topics file.")
+    with col_areas:
+        areas_file = st.file_uploader("Upload Areas (.txt)", key="step4", disabled=st.session_state.df3.empty)
+        if st.button("🗺️ Map Areas", disabled=st.session_state.df3.empty):
+            if areas_file:
+                st.session_state.functional_areas = [line.strip() for line in io.StringIO(areas_file.getvalue().decode("utf-8")) if line.strip()]
+                df = st.session_state.df3.copy()
+                df['Functional Area'] = df.apply(map_functional_area_from_url, functional_areas=st.session_state.functional_areas, axis=1)
+                st.session_state.df_final_pre_ai = df
+                st.success("Areas mapped!")
+            else: st.warning("Upload an areas file.")
 
 # --- Tab 2: AI Processing ---
 with tab2:
     st.header("Step 5: Enrich Data with AI")
     if st.button("🤖 Fill Blanks & Generate Keywords", disabled=st.session_state.df_final_pre_ai.empty):
-        if not api_key:
-            st.warning(f"Please enter your {api_key_label} in the sidebar.")
+        if not api_key: st.warning(f"Please enter your {api_key_label} in the sidebar.")
         else:
             with st.spinner("AI is processing... This may take several minutes."):
                 st.session_state.df_final = enrich_data_with_ai(
@@ -400,17 +419,16 @@ with tab2:
                     st.session_state.functional_areas, api_key, ai_provider, hf_model_id
                 )
             st.success("✅ AI enrichment complete!")
-            st.session_state.df_refined = pd.DataFrame()
+            st.session_state.df_refined = pd.DataFrame() # Reset refined df if re-enriching
 
     if not st.session_state.df_final.empty:
         csv_step5 = st.session_state.df_final.to_csv(index=False).encode('utf-8-sig')
-        st.download_button("📥 Download Enriched Report", csv_step5, "enriched_report.csv", "text/csv")
+        st.download_button("📥 Download Enriched Report (Step 5)", csv_step5, "enriched_report.csv", "text/csv")
 
     st.markdown("---")
     st.header("Step 6: Uniqueness Analysis & Refinement")
     if st.button("🔍 Analyze and Refine Uniqueness", disabled=st.session_state.df_final.empty):
-        if not api_key:
-            st.warning(f"Please enter your {api_key_label} in the sidebar.")
+        if not api_key: st.warning(f"Please enter your {api_key_label} in the sidebar.")
         else:
             with st.spinner("Analyzing keyword uniqueness and refining with AI..."):
                 df_refined, message = analyze_and_refine_uniqueness(st.session_state.df_final, api_key, ai_provider, hf_model_id)
@@ -419,25 +437,39 @@ with tab2:
 
     if not st.session_state.df_refined.empty:
         csv_step6 = st.session_state.df_refined.to_csv(index=False).encode('utf-8-sig')
-        st.download_button("📥 Download Refined Report", csv_step6, "refined_report.csv", "text/csv")
+        st.download_button("📥 Download Refined Report (Step 6)", csv_step6, "refined_report.csv", "text/csv")
 
 # --- Tab 3: Results Editor ---
 with tab3:
     st.header("📊 Interactive Results Editor")
-    st.info("The table below is interactive. You can make manual edits before downloading.")
+    st.info("The table below is interactive. You can make manual edits and download the results directly from this tab.")
 
+    # Determine which dataframe is active
     df_to_show, current_data_key = (st.session_state.df_refined, 'df_refined') if not st.session_state.df_refined.empty else \
                                    (st.session_state.df_final, 'df_final') if not st.session_state.df_final.empty else \
-                                   (st.session_state.df_final_pre_ai, 'df_final_pre_ai')
+                                   (st.session_state.df_final_pre_ai, 'df_final_pre_ai') if not st.session_state.df_final_pre_ai.empty else \
+                                   (st.session_state.df1, 'df1')
 
     if not df_to_show.empty:
         final_cols = ['Page Title', 'Page URL', 'Deployment Type', 'User Role', 'Functional Area', 'Topics', 'Keywords', 'Uniqueness Score']
         display_cols = [col for col in final_cols if col in df_to_show.columns]
-        edited_df = st.data_editor(df_to_show[display_cols], key="data_editor", num_rows="dynamic", height=600)
-        if st.button("💾 Save Manual Edits"):
-            st.session_state[current_data_key] = edited_df
-            st.success("Your edits have been saved! You can download the updated report from the 'AI Processing' tab.")
-            time.sleep(2)
-            st.rerun()
+        edited_df = st.data_editor(df_to_show[display_cols], key="data_editor", num_rows="dynamic", height=600, use_container_width=True)
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("💾 Save Manual Edits"):
+                st.session_state[current_data_key] = edited_df
+                st.success("Your edits have been saved to the session.")
+                time.sleep(2)
+                st.rerun()
+        with col2:
+            csv_edited = edited_df.to_csv(index=False).encode('utf-8-sig')
+            st.download_button(
+                label="📥 Download Edited Data",
+                data=csv_edited,
+                file_name="edited_report.csv",
+                mime="text/csv",
+                type="primary"
+            )
     else:
-        st.write("Complete Step 1 in the first tab to begin.")
+        st.write("Complete the 'Scrape URLs' step in the first tab to begin.")
