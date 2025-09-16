@@ -61,7 +61,8 @@ def get_mapping_prompt(content, column_name, options_list, url=None):
     Analyze the following 'Page Content'. Your task is to select the most relevant term(s) from the provided 'Options List' that accurately describe the content.
 
     **Instructions**:
-    - You can select multiple options if they are all relevant.
+    - If the column is 'Functional Area', select only the single best option.
+    - For other columns, you can select multiple options if they are all relevant.
     {additional_instructions}
     - Your response MUST ONLY contain terms from the 'Options List'.
     - Separate multiple terms with a comma.
@@ -156,8 +157,21 @@ def call_ai_provider(prompt, api_key, provider, hf_model_id=None):
     except Exception as e:
         st.warning(f"AI API call failed: {e}")
         return ""
-    sanitized_text = response_text.strip().replace('"', '').replace("'", "")
-    return sanitized_text
+    
+    # MODIFIED BLOCK: Robustly clean and normalize the AI's response text.
+    # 1. Normalize newlines to a standard comma-space format
+    sanitized_text = response_text.strip().replace('\n', ', ')
+    
+    # 2. Remove quotes
+    sanitized_text = sanitized_text.replace('"', '').replace("'", "")
+    
+    # 3. Consolidate potential duplicate commas and fix spacing
+    #    (e.g., turns "value1,  ,value2" into "value1, value2")
+    sanitized_text = re.sub(r'\s*,\s*', ', ', sanitized_text)
+    sanitized_text = re.sub(r'(, )+', ', ', sanitized_text)
+    
+    # 4. Strip any leading/trailing commas or spaces from the final result
+    return sanitized_text.strip(' ,')
 
 # --- DATA ENRICHMENT ORCHESTRATOR ---
 
@@ -204,7 +218,7 @@ def enrich_data_with_ai(dataframe, user_roles, topics, functional_areas, api_key
         if pd.isna(row['Functional Area']) or row['Functional Area'] == '':
             prompt = get_mapping_prompt(content, 'Functional Area', functional_areas)
             ai_response = call_ai_provider(prompt, api_key, provider, hf_model_id)
-            df_to_process.loc[index, 'Functional Area'] = ai_response
+            df_to_process.loc[index, 'Functional Area'] = ai_response.split(',')[0].strip() if ',' in ai_response else ai_response
             time.sleep(1)
 
         # New holistic keyword generation with adaptation for lean content
@@ -403,28 +417,24 @@ def find_items_in_text(text, items):
 
 def map_functional_area_from_url(row, functional_areas):
     """
-    Maps all relevant functional areas by parsing the URL.
+    Maps the functional area by parsing the URL against a list of known areas.
     """
-    found_areas = [] # MODIFIED: Initialize a list to hold all matches.
-
     # Preserve the specific FDE rule first for precedence
     if "/fde/" in row['Page URL'].lower():
-        # MODIFIED: Add to the list instead of returning immediately.
-        found_areas.append("Forward Deployed Engineering")
+        return "Forward Deployed Engineering"
     
-    # Create URL-friendly versions of functional areas
+    # Create URL-friendly versions of functional areas to check against the URL
+    # Example: "Open Connector Framework" -> "OpenConnectorFramework"
     url_segment_map = {
         re.sub(r'\s+', '', area): area for area in functional_areas
     }
     
-    # Find all matching functional areas in the URL
+    # Find the first matching functional area in the URL
     for segment, area_name in url_segment_map.items():
         if segment in row['Page URL']:
-            # MODIFIED: Add every match found to the list.
-            found_areas.append(area_name)
+            return area_name
             
-    # MODIFIED: Return a unique, sorted, comma-separated string of all found areas.
-    return ", ".join(sorted(list(set(found_areas))))
+    return "" # Return empty if no match, so AI can fill it later
 
 def apply_role_hierarchy(roles_str):
     """
@@ -525,7 +535,7 @@ with st.expander("Step 1: Scrape URLs and Content", expanded=True):
                     data.update({'Page Content': 'Fetch Error', 'Section Titles': '', 'Code Content': ''})
                 results.append(data)
             st.session_state.df1 = pd.DataFrame(results)
-            st.session_state.df2, st.session_state.df3, st.session_state.df_final, st.session_state.df_refined, st.session_state.df_final_pre_ai = pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+            st.session_state.df2, st.session_state.df3, st.session_state.df_final, st.session_state.df_refined, st.session_state.df_final_pre_ai = pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
             st.session_state.user_roles, st.session_state.topics, st.session_state.functional_areas = None, None, None
             st.success("✅ Step 1 complete!")
         else:
