@@ -5,7 +5,7 @@ from bs4 import BeautifulSoup
 import io
 import re
 import time
-import google.generai as genai
+import google.generativeai as genai
 from openai import OpenAI
 from huggingface_hub import InferenceClient
 from collections import defaultdict
