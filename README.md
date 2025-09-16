@@ -1,6 +1,10 @@
-Follow these steps:
+# AI-Powered Content Taxonomy
 
-1. In the [Intelligent Content Mapper](https://intelligent-content-mapping.streamlit.app/) application, navigate to  **Step 1: Ingest and Map** \> **Scrape URLs and Content** tab.  
+Helps documentation teams in mapping deployment type, topics, and user roles to web pages based on the input provided. Generate SEO technical keywords and map them to your web pages. 
+
+## Map and Generate Keywords
+
+1. In the [AI-Powered Content Taxonomy](https://intelligent-content-mapping.streamlit.app/) application, navigate to  **Step 1: Ingest and Map** \> **Scrape URLs and Content** tab.  
 
 2. **Browse** and upload the assigned TXT file (containing URLs) that you unzipped and then click **Scrape URLs.**  
 
@@ -12,13 +16,7 @@ Follow these steps:
 
    3. In the **Upload Areas (.txt)** section, browse the `functional_area.txt` file and click **Map Functional Areas**.  
 
-4. Proceed to the **Step 2: Generate Keywords** tab and in the left navigation pane, select **Choose AI Provider** as `Google Gemini` and copy-paste your Gemini API keys from below:   
-
-* **Saritha:** xxxxxxxxxxxxxxxxxxx25Z12Q  
-
-* **Sridhar:** xxxxxxxxxxxxxxxxxxxxxxxitVdfU  
-
-* **Elena:** xxxxxxxxxxxxxxxxxxxxxxxxxx6Hw  
+4. Proceed to the **Step 2: Generate Keywords** tab and in the left navigation pane, select **Choose AI Provider** as `Google Gemini` and copy-paste your Gemini API keys.   
 
 5. Click **Fill Blanks and Generate Keywords** and wait till the application processes.  
 
@@ -35,7 +33,5 @@ Follow these steps:
 9. Navigate to the **Step 3: Edit & Download Results** tab, verify your taxonomy data in the **Interactive Results Editor**.  
 
 10. (Optional) Make edits if required and download the refined CSV file.
-
-—------------------------------------------------------------------------------------------------------------------
 
 11.  Creating a Jira ticket, opening PR, and running the [final script](https://github.com/mrsauravs/alation_scripts/blob/main/update_rst_metadata.py) is the same as before for final submission. For more information, see [Step 6 (in the Implementation Guide)](?tab=t.84y8zvp897yz#heading=h.mqycnd1y8owz)	
