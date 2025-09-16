@@ -1,0 +1,89 @@
+/* --- GLOBAL STYLES --- */
+
+/* Change the font for the entire app */
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+/* Main app background color */
+.main {
+    background-color: #F0F2F6; /* A light grey background */
+}
+
+/* --- SIDEBAR STYLES --- */
+
+/* Sidebar background */
+[data-testid="stSidebar"] {
+    background-color: #FFFFFF; /* A clean white sidebar */
+    border-right: 2px solid #E0E0E0;
+}
+
+/* Sidebar header text style */
+[data-testid="stSidebar"] .st-emotion-cache-10oheav {
+    color: #1E1E1E; /* Dark text for the title */
+    font-weight: 600;
+}
+
+/* --- BUTTON STYLES --- */
+
+/* General button styling */
+.stButton>button {
+    border: 2px solid #0068C9; /* A professional blue border */
+    border-radius: 10px;
+    color: #0068C9;
+    background-color: #FFFFFF;
+    padding: 10px 24px;
+    font-weight: bold;
+    transition: all 0.3s ease-in-out; /* Smooth transition for hover effects */
+}
+
+/* Button hover effect */
+.stButton>button:hover {
+    border-color: #00509E;
+    color: #FFFFFF;
+    background-color: #0068C9;
+    transform: scale(1.02); /* Slightly enlarge button on hover */
+}
+
+/* Style for Streamlit's primary buttons (if you use type="primary") */
+.stButton>button[kind="primary"] {
+    background-color: #0068C9;
+    color: #FFFFFF;
+}
+
+/* --- TAB STYLES --- */
+
+/* Container for the tabs */
+.stTabs [data-baseweb="tab-list"] {
+    gap: 24px; /* Increase space between tab titles */
+    border-bottom: 2px solid #E0E0E0;
+}
+
+/* Inactive tab titles */
+.stTabs [data-baseweb="tab"] {
+    height: 50px;
+    background-color: #F0F2F6;
+    border-radius: 8px 8px 0 0;
+    padding: 10px 20px;
+}
+
+/* Active tab title */
+.stTabs [aria-selected="true"] {
+    background-color: #FFFFFF;
+    color: #0068C9;
+    font-weight: bold;
+    border-bottom: 2px solid #0068C9;
+}
+
+/* --- INPUT & WIDGET STYLES --- */
+
+/* Style for text inputs and select boxes for a uniform look */
+.stTextInput, .stSelectbox {
+    border-radius: 8px;
+}
+
+/* --- HEADER STYLES --- */
+
+h1, h2, h3 {
+    color: #1E3A8A; /* A deep blue for headers */
+}
