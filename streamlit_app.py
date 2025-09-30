@@ -95,7 +95,7 @@ def call_ai_provider(prompt, api_key, provider, hf_model_id=None):
     try:
         if provider == "Google Gemini":
             genai.configure(api_key=api_key)
-            model = genai.GenerativeModel('gemini-1.5-flash-002')
+            model = genai.GenerativeModel('gemini-2.5-flash')
             response = model.generate_content(prompt)
             response_text = response.text
         elif provider == "OpenAI (GPT-4)":
